@@ -1,14 +1,20 @@
-package main
+package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"claude-tower/internal/locate"
+	"claude-tower/internal/registry"
+	"claude-tower/internal/tmux"
 )
 
 var testNow = time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
@@ -76,10 +82,19 @@ func busySession(pid int) string {
 		pid, tid, testNow.Add(-5*time.Minute).UnixMilli())
 }
 
-func runArgs(args []string, getenv func(string) string) (int, string, string) {
+// fakeDeps never touches the tmux servers of the machine running the tests.
+func fakeDeps(locations map[int]string) deps {
+	return deps{locations: func(context.Context, []registry.Session) map[int]string { return locations }}
+}
+
+func runArgsDeps(args []string, getenv func(string) string, d deps) (int, string, string) {
 	var out, errb bytes.Buffer
-	code := run(args, &out, &errb, getenv)
+	code := run(args, &out, &errb, getenv, d)
 	return code, out.String(), errb.String()
+}
+
+func runArgs(args []string, getenv func(string) string) (int, string, string) {
+	return runArgsDeps(args, getenv, fakeDeps(nil))
 }
 
 func TestBar(t *testing.T) {
@@ -169,40 +184,24 @@ func TestList(t *testing.T) {
 		ppid: fmt.Sprintf(`{"pid":%d,"sessionId":"22222222-2222-3333-4444-555555555555","name":"zzz","status":"idle","tmux":"0:@0.%%4"}`, ppid),
 	})
 	writeTranscript(t, dir, tid, `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"make"}}]}}`)
-	code, out, _ := runArgs([]string{"list", "--dir", dir}, env(map[string]string{"HOME": "/srv"}))
+	d := fakeDeps(map[int]string{pid: "hors tmux", ppid: "tmux"})
+	code, out, _ := runArgsDeps([]string{"list", "--dir", dir}, env(map[string]string{"HOME": "/srv"}), d)
 	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
 	if code != 0 || len(lines) != 2 {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
-	if want := "●  demo  travaille  5m  -  ~/demo  Bash: make"; lines[0] != want {
+	if want := "●  demo  travaille  5m  -  hors tmux  ~/demo  Bash: make"; lines[0] != want {
 		t.Errorf("got  %q\nwant %q", lines[0], want)
 	}
-	if !strings.HasPrefix(lines[1], "○  zzz  fini  -  %4  ") {
+	if !strings.HasPrefix(lines[1], "○  zzz  fini  -  %4  tmux  ") {
 		t.Errorf("second line: %q", lines[1])
 	}
 }
 
-func TestNoSubcommandStartsTUI(t *testing.T) {
-	old := runTUI
-	defer func() { runTUI = old }()
-	var gotDir, gotHome, gotClient string
-	runTUI = func(dir, home, client string) error {
-		gotDir, gotHome, gotClient = dir, home, client
-		return nil
-	}
-	code, out, _ := runArgs([]string{"--dir", "/x", "--client", "c1"}, env(map[string]string{"HOME": "/h"}))
-	if code != 0 || out != "" || gotDir != "/x" || gotHome != "/h" || gotClient != "c1" {
-		t.Errorf("code=%d out=%q dir=%q home=%q client=%q", code, out, gotDir, gotHome, gotClient)
-	}
-}
-
-func TestTUIErrorExitsOne(t *testing.T) {
-	old := runTUI
-	defer func() { runTUI = old }()
-	runTUI = func(string, string, string) error { return errors.New("no tty") }
-	code, _, errOut := runArgs([]string{"--dir", "/x"}, env(nil))
-	if code != 1 || !strings.Contains(errOut, "no tty") {
-		t.Errorf("code=%d err=%q", code, errOut)
+func TestNoSubcommandIsPlaceholder(t *testing.T) {
+	code, out, errOut := runArgs(nil, env(nil))
+	if code != 1 || out != "" || !strings.Contains(errOut, "interface graphique") {
+		t.Errorf("code=%d out=%q err=%q", code, out, errOut)
 	}
 }
 
@@ -246,5 +245,44 @@ func TestDefaultConfigDir(t *testing.T) {
 	_, out, _ := runArgs([]string{"bar"}, env(map[string]string{"HOME": home}))
 	if !strings.Contains(out, "demo") {
 		t.Errorf("got %q", out)
+	}
+}
+
+func TestListUnknownLocationWithoutTmux(t *testing.T) {
+	pid := os.Getpid()
+	dir := fixture(t, map[int]string{pid: busySession(pid)})
+	_, out, _ := runArgsDeps([]string{"list", "--dir", dir}, env(nil), fakeDeps(unknownLocations([]registry.Session{{PID: pid}})))
+	if !strings.Contains(out, "  ?  ") {
+		t.Errorf("location column missing: %q", out)
+	}
+}
+
+func fixedRunner(out string) tmux.Runner {
+	return func(context.Context, io.Reader, string, ...string) ([]byte, error) { return []byte(out), nil }
+}
+
+func TestTmuxLocations(t *testing.T) {
+	sessions := []registry.Session{{PID: 300}, {PID: 400}, {PID: 500}}
+	tree := locate.Tree{300: 200, 200: 100, 400: 450, 450: 1, 500: 600}
+	readTree := func(context.Context, tmux.Runner) (locate.Tree, error) { return tree, nil }
+	pub := tmux.Server{Socket: "/s/default", Run: fixedRunner("%1\t100\t$1\tmain\t@1\t1\t\t80\t24\n")}
+	priv := tmux.Server{Socket: "/s/private", Run: fixedRunner("%2\t600\t$2\tpriv\t@2\t1\t\t80\t24\n")}
+	dead := tmux.Server{Socket: "/s/dead", Run: func(context.Context, io.Reader, string, ...string) ([]byte, error) {
+		return nil, errors.New("no server running")
+	}}
+	got := tmuxLocations(context.Background(), sessions, []tmux.Server{dead, pub, priv}, "/s/private", readTree, nil)
+	want := map[int]string{300: "tmux", 400: "hors tmux", 500: "privé"}
+	for pid, w := range want {
+		if got[pid] != w {
+			t.Errorf("pid %d: got %q want %q", pid, got[pid], w)
+		}
+	}
+}
+
+func TestTmuxLocationsUnknownWhenTreeUnreadable(t *testing.T) {
+	readTree := func(context.Context, tmux.Runner) (locate.Tree, error) { return nil, errors.New("no ps") }
+	got := tmuxLocations(context.Background(), []registry.Session{{PID: 1}}, nil, "", readTree, nil)
+	if got[1] != "?" {
+		t.Errorf("got %v", got)
 	}
 }

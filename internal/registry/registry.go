@@ -10,8 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 )
@@ -48,7 +50,7 @@ type Session struct {
 // Reader reads the session registry of one config directory.
 type Reader struct {
 	Dir      string                               // absolute config dir, such as the expansion of ~/.claude
-	Alive    func(pid int, procStart string) bool // default: procAlive
+	Alive    func(pid int, procStart string) bool // default: DefaultAlive(runtime.GOOS)
 	ReadFile func(path string) ([]byte, error)    // default: os.ReadFile
 }
 
@@ -71,7 +73,7 @@ func (r Reader) Sessions() ([]Session, error) {
 	}
 	alive, read := r.Alive, r.ReadFile
 	if alive == nil {
-		alive = procAlive
+		alive = DefaultAlive(runtime.GOOS)
 	}
 	if read == nil {
 		read = os.ReadFile
@@ -243,6 +245,26 @@ func truncateRunes(s string, n int) string {
 		return s
 	}
 	return string(r[:n])
+}
+
+// DefaultAlive returns the liveness check for the given GOOS value. Linux
+// compares the process start time with procStart to rule out a reused PID;
+// other systems only probe the PID, so a reused PID can look alive.
+func DefaultAlive(goos string) func(pid int, procStart string) bool {
+	if goos == "linux" {
+		return procAlive
+	}
+	return pidAlive
+}
+
+// pidAlive reports whether a process with this PID exists. EPERM means it
+// exists but belongs to another user.
+func pidAlive(pid int, _ string) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
 // procAlive reports whether pid exists and, when procStart is not empty,

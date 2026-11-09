@@ -291,3 +291,59 @@ func TestProcAlive(t *testing.T) {
 		t.Error("nonexistent pid reported alive")
 	}
 }
+
+func TestDefaultAliveByGOOS(t *testing.T) {
+	pid := os.Getpid()
+	if !DefaultAlive("darwin")(pid, "not-a-start-time") {
+		t.Error("darwin: own pid with any procStart must be alive")
+	}
+	if DefaultAlive("darwin")(1<<30, "") {
+		t.Error("darwin: nonexistent pid reported alive")
+	}
+	if DefaultAlive("darwin")(0, "") || DefaultAlive("darwin")(-1, "") {
+		t.Error("darwin: non-positive pid reported alive")
+	}
+	if _, err := os.ReadFile("/proc/self/stat"); err != nil {
+		t.Skip("no /proc")
+	}
+	if DefaultAlive("linux")(pid, "not-a-start-time") {
+		t.Error("linux: mismatching procStart must be dead")
+	}
+	if !DefaultAlive("linux")(pid, "") {
+		t.Error("linux: own pid reported dead")
+	}
+}
+
+func TestSessionsDefaultsToDefaultAlive(t *testing.T) {
+	data, err := os.ReadFile("/proc/self/stat")
+	if err != nil {
+		t.Skip("no /proc")
+	}
+	start, ok := parseStartTime(string(data))
+	if !ok {
+		t.Fatal("cannot parse own stat")
+	}
+	dir := t.TempDir()
+	writeSession(t, dir, fmt.Sprintf("%d.json", os.Getpid()),
+		fmt.Sprintf(`{"pid":%d,"procStart":"%s"}`, os.Getpid(), start))
+	writeSession(t, dir, "7.json", fmt.Sprintf(`{"pid":7,"procStart":"x"}`))
+	writeSession(t, dir, "99999999.json", `{"pid":99999999}`)
+	ss, err := Reader{Dir: dir}.Sessions()
+	if err != nil || len(ss) != 1 || ss[0].PID != os.Getpid() {
+		t.Fatalf("sessions=%+v err=%v", ss, err)
+	}
+	writeSession(t, dir, fmt.Sprintf("%d.json", os.Getpid()),
+		fmt.Sprintf(`{"pid":%d,"procStart":"%s1"}`, os.Getpid(), start))
+	if ss, _ := (Reader{Dir: dir}).Sessions(); len(ss) != 0 {
+		t.Errorf("live pid with a wrong procStart kept: %+v", ss)
+	}
+}
+
+func TestPidAliveEPERM(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can signal PID 1")
+	}
+	if !pidAlive(1, "") {
+		t.Error("PID 1 (EPERM) reported dead")
+	}
+}
