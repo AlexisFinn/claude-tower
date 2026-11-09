@@ -1,402 +1,536 @@
-# claude-tower : plan d'implémentation
+# claude-tower (bureau) : plan d'implémentation
 
-Outil Go en lecture seule pour suivre les sessions Claude Code en cours sur la machine :
+Application de bureau pour Linux et macOS, à partager avec l'équipe. Elle affiche toutes les sessions Claude Code de la machine sous forme de cartes, et permet de les piloter sans quitter la fenêtre :
+- une grille de cartes à l'ordre fixe, avec un cadre coloré selon l'état et le bas de l'écran de la session en direct ;
+- sélection aux flèches, aux touches `hjkl` ou au clic ;
+- `Entrée` ou double-clic va à la session : vers le terminal où elle est déjà affichée, sinon dans un terminal plein écran intégré ;
+- une barre de prompt en bas, qui envoie le message à la session sélectionnée ;
+- une touche pour lancer une nouvelle session, une autre pour en arrêter une.
 
-- `claude-tower bar` : segment pour la barre d'état tmux ;
-- `claude-tower` : interface en terminal (Bubble Tea) dans un `tmux display-popup`, où `Entrée` amène sur le volet de la session.
+La version terminal (branche `main`, jusqu'au commit `2943b3a`) sert de base :
+- `internal/registry`, `internal/transcript` et `internal/view` (états, libellés, durées) ;
+- la commande `bar`, qui est conservée.
 
-Contraintes : pas de hook, pas de serveur, pas de base de données, pas d'écriture hors du dépôt. On affiche le strict nécessaire (nom, état, durée, dossier, dernière activité) : pas de tokens, pas de statistiques. Un seul compte Claude : le compte courant.
+`internal/tui` et `internal/tmuxctl` sont supprimés. La remontée des PID parents part dans `internal/locate`.
 
-## Faits établis (vérifiés le 2026-11-09, Claude Code 2.1.318)
+## Décisions
 
-### Registre des sessions
+- **Technologie** : Wails v2 (Go, avec la vue web du système), frontend Svelte + TypeScript, terminaux xterm.js.
+- **tmux 3.2 ou plus est obligatoire.** Il est vérifié au démarrage, avec un message explicite.
+- **Sessions lancées depuis l'application** : dans un serveur tmux privé et caché. Elles survivent à la fermeture de l'application.
+- **`claude-tower run [args…]`** remplace `claude` pour ceux qui n'utilisent pas tmux. Les arguments sont transmis tels quels à claude. La session tourne dans le serveur privé, et `run` s'y rattache dans le terminal courant. Fermer ce terminal **détache seulement** : la session continue.
+- **Arrêter une session** : touche `x`, avec confirmation qui montre le nom et le PID. Seulement pour les sessions du serveur privé.
+- **Les trois cas de session** :
 
-Il y a un fichier `<configDir>/sessions/<pid>.json` par session vivante. Le fichier est supprimé quand la session se termine proprement. Le même dossier contient aussi des fichiers `<pid>.<hash>.key` : ne jamais les lire. Exemple de fichier :
+  | Session | Corps de la carte | Prompt | « Aller à la session » |
+  | --- | --- | --- | --- |
+  | Dans tmux, affichée par au moins un client | bas de l'écran réel | oui | X11 et macOS : bascule ce client et met son terminal au premier plan. Wayland ou échec : plein écran intégré |
+  | Dans tmux, aucun client | bas de l'écran réel | oui | plein écran intégré |
+  | Hors tmux | résumé du transcript | non | met au premier plan la fenêtre du terminal (X11, macOS), sinon message |
 
-```json
-{"pid":824693,"sessionId":"75f334f0-4dc9-41db-85e2-1d96e0dbaaf1","cwd":"/home/alexis/zest",
- "startedAt":1794216804002,"procStart":"136546471","version":"2.1.318","kind":"interactive",
- "entrypoint":"cli","tmux":"0:@0.%0","messagingSocketPath":"/run/user/1000/cc-socks/824693.sock",
- "name":"zest-fe","nameSource":"derived","status":"idle","updatedAt":1794222510978,
- "statusUpdatedAt":1794222510978}
-```
+- **Prompt, en liste blanche** : l'envoi n'est autorisé que si la session est dans tmux et que son statut est `idle`, `busy` ou `shell`. Tout `waiting` et tout statut inconnu le bloquent, avec la raison affichée ; on répond alors depuis le plein écran. L'état est relu **juste avant le collage**.
+- **Ordre des cartes fixe** : par date de début de la session (`StartedAt`), puis par PID. L'urgence se voit à la couleur du cadre : Waiting rouge, Busy jaune, Background cyan, Idle gris, Unknown gris pointillé. La carte sélectionnée a un cadre plus épais.
+- **Corps de la carte** : les dernières lignes de l'écran, à une taille lisible (police de 11 px), coupées à droite. Le plein écran montre tout.
+- **macOS** : il n'est pas testable sur le poste de développement. Un collègue déroule la checklist macOS du README avant le partage.
+- **Pas de Windows natif.**
 
-- Les horodatages sont en millisecondes depuis l'epoch.
-- `status` prend les valeurs `busy`, `shell`, `idle` et `waiting` ; c'est l'énumération du registre dans le binaire.
-  - `shell` : la session exécute une commande shell.
-  - `waiting` : la session attend l'utilisateur, avec un champ `waitingFor` (valeurs vues dans le binaire : `"dialog open"`, `"input needed"`, `"sandbox request"`, `"worker request"`, `"goal proposal"` ; la liste n'est pas fermée). Une demande d'autorisation donne `"permission prompt"` (observé le 2026-11-09).
-- `kind` : `interactive`, `bg`, `daemon` ou `daemon-worker`. Il peut aussi y avoir un booléen `spare`.
-- `entrypoint` : `cli` pour une session interactive. Un `claude -p` s'inscrit pendant son exécution avec `kind: interactive` et `entrypoint: sdk-cli`, et hérite du volet tmux de son parent : les `entrypoint` qui commencent par `sdk` sont ignorés.
-- `tmux` est au format `<session>:@<window_id>.%<pane_id>`. Il peut manquer si la session tourne hors de tmux. Il ne contient pas la socket du serveur tmux.
-- `procStart` (chaîne de chiffres aujourd'hui) est égal au champ 22 de `/proc/<pid>/stat` (starttime, en ticks). Comparer les deux permet de détecter un fichier orphelin dont le PID a été réutilisé. Le champ `comm` (2) peut contenir des espaces et des parenthèses : découper après la **dernière** `)`. Dans le reste de la ligne découpé par `strings.Fields`, le champ 3 (state) est à l'index 0, donc starttime est à l'**index 19**.
-- Il peut y avoir d'autres champs (`pidDomain`, `peerFeatures`, `logPath`…) : on les ignore.
-- Claude Code ne réécrit peut-être pas ce fichier de façon atomique : une lecture peut tomber sur un JSON tronqué.
-- Ce format est interne et non documenté : tout ce qui en dépend vit dans le seul paquet `internal/registry`.
+## Faits établis (vérifiés le 2026-11-09)
 
-### Transcript
+### Registre et états
 
-Chemin : `<configDir>/projects/<slug>/<sessionId>.jsonl`, une ligne JSON par enregistrement. On le trouve par glob `projects/*/<sessionId>.jsonl`, sans recalculer le slug. Champs utiles :
+Voir le code existant et l'ancien plan (`git show main:PLAN.md`).
+- `status` : `busy`, `shell`, `idle`, `waiting`.
+- `waitingFor` : liste ouverte (`permission prompt`, `dialog open`, `input needed`…).
+- `claude -p` (`entrypoint: sdk-cli`) est filtré.
+- Le champ `tmux` du registre n'a pas la socket : on localise les sessions par la recherche du lot A.
+- **Linux seulement** : `registry.procAlive` lit `/proc/<pid>/stat`. Sous macOS, il faut un autre test de vivacité.
 
-- `type` : on ne retient que `assistant` et `user`. Les autres (`system`, `attachment`, `api-request`, `api-request-blob`, `mode`, `last-prompt`…) sont ignorés.
-- `isMeta: true` : message injecté par l'outil (rappels, messages d'agents), à ignorer.
-- `isCompactSummary: true` ou `isVisibleInTranscriptOnly: true` : résumé écrit après un compactage (`type: user`, contenu en chaîne), à ignorer.
-- `message.content` : soit une chaîne (prompt tapé), soit un tableau de blocs `{type: "text"|"thinking"|"tool_use"|"tool_result"|"image", ...}`.
-  - Un bloc `tool_use` porte `name` et `input`. Selon l'outil, l'argument utile est `input.command` (Bash), `input.file_path` (Read, Edit, Write), `input.pattern` (Grep, Glob) ou `input.description` (Agent).
-- Les chaînes `user` qui commencent par `<` sont des notifications ou commandes internes (`<task-notification>`, `<command-name>`, `<local-command-caveat>`…), à ignorer. Les textes `user` qui commencent par `[Request interrupted` ou `[Image` sont du bruit, à ignorer aussi.
-- Certaines lignes dépassent plusieurs centaines de Kio (blobs, gros `tool_result`, images en base64).
-- Une session peut ne pas avoir encore de transcript (session neuve, `/clear`) : la dernière activité est alors vide, ce n'est pas une erreur.
+### tmux (3.8 sur le poste ; certaines commandes demandent 3.2 ou plus)
+
+**Sockets et serveurs**
+- Les sockets de l'utilisateur sont dans `${TMUX_TMPDIR:-/tmp}/tmux-<uid>/`. Une socket peut être orpheline : la commande échoue, on l'ignore.
+- `-f` n'est lu qu'au démarrage du serveur, et un fichier absent est ignoré sans erreur. Sur un serveur vivant, on recharge avec `source-file`.
+- Un serveur garde **son** environnement : `new-session` ne transmet au processus que ce qui est passé explicitement.
+
+**Limites des commandes**
+- Une commande tmux de plus d'environ 16 Kio échoue (« command too long ») : c'est le cas de `set-buffer` et de `-e` répétés.
+- Les arguments d'une commande sont lisibles dans `/proc/<pid>/cmdline`.
+
+**Volets et sessions groupées**
+- `list-panes -a` liste un volet une fois par session du groupe.
+- Le volet actif est propre à la fenêtre, donc commun à tout le groupe : `select-pane` dans une session de vue change le volet actif de l'utilisateur.
+- `set-option destroy-unattached on` sur une session **jamais attachée** la détruit aussitôt.
+- `tmux attach -t <vue> \; set-option -t <vue> destroy-unattached on` fonctionne : la session est détruite quand son client disparaît.
+- Cibles : les identifiants `$N` (session), `@N` (fenêtre) et `%N` (volet) marchent avec toutes les commandes. `=nom` ne marche pas avec `set-option` (il faut `=nom:`). **On cible donc toujours par identifiant.**
+
+**Collage d'un prompt**
+- `paste-buffer -p` (collage entre crochets) envoie `\e[200~…\e[201~`, mais seulement si l'application l'a demandé, ce que fait Claude Code. Sans `-S`, il neutralise les ESC (`^[`) et les autres contrôles. LF devient CR.
+- Un `send-keys Enter` qui suit arrive après `\e[201~`.
+- Si le volet est en copy-mode, l'Entrée est consommée par le mode. On l'annule de façon atomique : `if-shell -F -t <volet> '#{pane_in_mode}' 'send-keys -t <volet> -X cancel'`.
+- `load-buffer -b <nom> -` lit le texte sur l'entrée standard, sans limite de taille.
+
+**Divers**
+- `capture-pane -p -e` renvoie l'écran visible : lignes séparées par `\n` seul, avec un `\n` final.
+- Une session détachée sans `-x`/`-y` fait 80×24.
+- `tmux attach` sans `TERM` échoue. Sans locale UTF-8, les caractères non ASCII deviennent `_`.
 
 ### Environnement
 
-- Go 1.26. `go.mod` (module `claude-tower`) et `go.sum` contiennent déjà bubbletea v1.3.10 et lipgloss v1.1.0, ajoutés depuis le cache.
-- Les dépendances de test de lipgloss (`go-udiff`, `x/exp/golden`) ne sont pas dans le cache : `go mod tidy` hors ligne échouera. Ne pas le lancer.
-- `github.com/charmbracelet/x/ansi` v0.10.1 (dépendance de lipgloss) est utilisable directement, y compris au lot 1 : `ansi.Truncate(s, width, tail)` et `ansi.StringWidth(s)`.
-- tmux 3.8. Config `~/.config/tmux/tmux.conf`, avec tpm et les plugins tmux-sensible, tmux-autoreload, tmux-resurrect et tmux-dotbar ; la ligne `run '…/tpm/tpm'` est la dernière.
-  - `status-interval` vaut déjà 5 (tmux-sensible).
-  - tmux-dotbar écrit `status-right` au chargement, à partir de `@tmux-dotbar-right` et `@tmux-dotbar-status-right`.
-  - tmux-autoreload recharge la config à chaque modification. Un `set -ga` y serait donc ré-appliqué à chaque rechargement.
-  - `status-right-length` vaut 40 ; `status-justify` vaut `absolute-centre`.
-  - `prefix C` est lié à `customize-mode`. `prefix a` est libre.
-  - Les commandes `#(...)` et `display-popup` héritent de l'environnement du serveur tmux : chemins absolus obligatoires.
+**Lanceur de bureau ou Finder**
+- `PATH` réduit. `TERM`, `LANG` et `TMUX_TMPDIR` sont souvent absents. Les variables du shell (`.zshrc`) manquent.
+- `$SHELL -lc` ne lit pas `.zshrc`. `$SHELL -ilc 'command -v claude'` peut renvoyer un alias ou une fonction, et non un chemin.
+
+**Poste de développement**
+- Go 1.26, Node 22, npm, X11.
+- Wails v2.17.1, `creack/pty` v1.1.24 et `jezek/xgb` v1.3.1 sont disponibles.
+- Fedora : `gtk3-devel`, `webkit2gtk4.1-devel`, et le tag `webkit2_41`.
+
+**Compilation**
+- Le paquet racine (Wails, cgo, `//go:embed all:frontend/dist`) ne compile qu'avec les dépendances système, le tag, et un `frontend/dist` non vide.
+- Tout ce qui est testable vit donc dans `internal/`, sans import de Wails.
+
+**Dépendances Go** : `go get <module>/...@<version>` remplit `go.sum` pour tous les paquets. `go mod tidy` ne se lance qu'en ligne, par l'utilisateur.
 
 ## Arborescence cible
 
 ```
-~/Projects/claude-tower/
-├── go.mod, go.sum
-├── main.go                     # sous-commandes : (aucune) → TUI, bar, list ; flags --dir, --client
-├── Makefile                    # build, test, install (→ ~/.local/bin, lancé par l'utilisateur)
-├── README.md
-├── internal/registry/          # lecture du registre, vivacité, filtrage, normalisation de l'état
-├── internal/transcript/        # dernière activité d'une session
-├── internal/view/              # formatage partagé : icône, libellé, durée, tri, nom affiché, barre
-├── internal/tui/               # Bubble Tea (lot 2)
-└── internal/tmuxctl/           # saut vers un volet (lot 2)
+claude-tower/
+├── main.go                    # Wails bootstrap; delegates subcommands to internal/cli
+├── wails.json
+├── frontend/                  # Svelte + TS; frontend/dist/.gitkeep committed; wailsjs/ committed
+├── internal/cli/              # run, list, bar, exec-env (no Wails import)
+├── internal/registry/         # existing; portable liveness
+├── internal/transcript/       # existing
+├── internal/view/             # existing
+├── internal/tmux/             # binary and version, servers, panes, clients, capture, paste, view sessions
+├── internal/locate/           # process tree, session→pane matching
+├── internal/hosting/          # private server: socket, config, environment, new session, run, kill
+├── internal/focus/            # raise a terminal window: X11, macOS, otherwise ErrUnsupported
+├── internal/core/             # snapshot, cards, screen, prompt, focus, new/kill session
+├── internal/ptyterm/          # embedded full-screen terminal
+└── internal/app/              # methods bound to Wails; Wails calls behind interfaces
 ```
 
-## Étapes
+## Lots
 
-### Lot 0 : initialisation et dépendances (fait)
+### Lot 0 (utilisateur) : outillage et squelette
 
-`git init` (branche `main`), `go mod init claude-tower`. L'utilisateur a ajouté bubbletea et lipgloss depuis le cache. La compilation hors ligne d'un fichier qui importe bubbletea, lipgloss et x/ansi réussit (`GOPROXY=off GOFLAGS=-mod=readonly`).
+Commandes données par l'orchestrateur, lancées par l'utilisateur :
 
-Dans `go.mod`, toutes les dépendances sont marquées `// indirect`, même celles importées directement. C'est sans effet sur `go build`, `go vet` et `go test` : ne pas chercher à le corriger.
+```sh
+sudo dnf install gtk3-devel webkit2gtk4.1-devel
+go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.1
+cd ~/Projects/claude-tower
+go get github.com/jezek/xgb/...@v1.3.1 github.com/creack/pty/...@v1.1.24 github.com/wailsapp/wails/v2/...@v2.17.1
+wails init -n claude-tower -t svelte-ts -d ~/Projects/claude-tower-skeleton
+cp -r ~/Projects/claude-tower-skeleton/frontend ~/Projects/claude-tower-skeleton/wails.json .
+rm -rf ~/Projects/claude-tower-skeleton
+cd frontend && npm install && npm install @xterm/xterm @xterm/addon-fit @xterm/addon-unicode11 @xterm/addon-clipboard && npm install -D vitest svelte-check
+cd .. && wails doctor
+```
 
-L'orchestrateur ajoute un `.gitignore` (binaire `claude-tower` à la racine), puis committe `PLAN.md`, `.gitignore`, `go.mod` et `go.sum` avant le lot 1.
+- L'orchestrateur relit ensuite le squelette copié et ajoute `frontend/dist/.gitkeep`.
+- `main.go` et `app.go` du squelette ne sont pas repris : le lot B écrit les siens.
+- Après le lot B, l'utilisateur lance `go mod tidy`.
 
-### Lot 1 (Sonnet, effort medium) : registre, transcript, `bar` et `list`
+### Lot A (Sonnet, effort high) : moteur, en deux sous-lots
 
-#### `internal/registry`
+- **A1** : `registry` (vivacité portable), `tmux`, `locate`, et `cli` (migration de `list` et `bar`, `main.go` minimal).
+- **A2**, après revue et commit de A1 : `hosting`, `focus`, `core`, et `run` / `exec-env` dans `cli`.
+
+Uniquement du Go, dans `internal/`, sans Wails.
+- Tout appel externe passe par un `Runner` injectable avec délai maximal (`exec.CommandContext`, 2 s par défaut).
+- L'erreur d'un `Runner` inclut le stderr de la commande.
+
+#### `internal/registry` (modification)
+
+- La vivacité est portable.
+  - Linux : inchangée (`/proc` et `procStart`).
+  - Ailleurs : `syscall.Kill(pid, 0)`, sans vérifier `procStart`.
+- Le comportement est choisi par `runtime.GOOS` au moment de construire le `Reader` par défaut, et reste injectable.
+- Test avec `Alive` injecté, et test du choix par `GOOS` (fonction pure).
+
+#### `internal/tmux`
 
 ```go
-type State int // StateUnknown (= iota, zero value), StateBusy, StateWaiting, StateIdle
+type Runner func(ctx context.Context, stdin io.Reader, name string, args ...string) ([]byte, error)
 
-type Session struct {
-    PID         int
-    SessionID   string
-    Name        string    // raw registry "name", may be empty
-    Cwd         string
-    Kind        string
-    State       State
-    RawStatus   string    // "busy", "shell", "idle", "waiting", or anything else
-    WaitingFor  string    // registry "waitingFor", "" when absent
-    StartedAt   time.Time // zero if absent
-    StatusSince time.Time // statusUpdatedAt, else updatedAt, else zero
-    TmuxPane    string    // "%N" extracted from "tmux", "" if absent or malformed
-    TurnEnded   bool      // never set by registry; filled by callers from transcript.Activity
+type Server struct{ Socket, Bin string; Run Runner } // every command uses -S Socket
+
+type Pane struct {
+    Server        Server
+    ID            string // "%N"
+    PID           int    // pane_pid
+    SessionID     string // "$N"
+    SessionName   string
+    WindowID      string // "@N"
+    Active        bool   // pane_active
+    SessionGroup  string // session_group, "" when ungrouped
+    Width, Height int
 }
 
-type Reader struct {
-    Dir      string                                  // config dir, e.g. /home/alexis/.claude
-    Alive    func(pid int, procStart string) bool    // default: procAlive; injectable for tests
-    ReadFile func(path string) ([]byte, error)       // default: os.ReadFile; injectable for tests
-}
+type Client struct{ Name string; PID int; SessionID, SessionGroup string; Activity int64 }
 
-func (r Reader) Sessions() ([]Session, error)
+func FindBinary(lookPath func(string) (string, error)) (string, error) // PATH, then /opt/homebrew/bin, /usr/local/bin, /usr/bin
+func CheckVersion(ctx, bin string, run Runner) error                   // tmux -V >= 3.2, explicit message otherwise
+func Servers(dir string, bin string, run Runner) []Server             // sockets of dir; candidates only, failures are handled by callers
+func (s Server) Panes(ctx) ([]Pane, error)
+func (s Server) Clients(ctx) ([]Client, error)
+func (s Server) Capture(ctx, pane string) (string, error)
+func (s Server) Paste(ctx, pane, text string) error
+func (s Server) SwitchClient(ctx, client, pane string) error
+func (s Server) NewViewSession(ctx, pane Pane) (ViewSession, error)
+func (s Server) RestoreActivePane(ctx, v ViewSession) error
+func (s Server) KillSession(ctx, sessionID string) error
+func (s Server) SweepViewSessions(ctx) error
 ```
 
-**Lecture**
-- Lire uniquement les fichiers de `<Dir>/sessions/` dont le nom correspond à `^[0-9]+\.json$`.
-- Si le dossier `sessions/` n'existe pas, renvoyer une liste vide, sans erreur. `Sessions` ne renvoie une erreur que si le dossier existe et ne peut pas être lu (droits, etc.).
-- Un fichier dont le JSON ne se décode pas est relu une fois après 20 ms, car une réécriture est peut-être en cours. S'il échoue encore, on ignore la session.
-- Décodage tolérant : `procStart` est accepté en chaîne ou en nombre (`json.RawMessage`, puis normalisé en chaîne de chiffres), les horodatages en nombre entier ou flottant. Un champ de type inattendu vaut zéro au lieu de faire échouer tout le fichier.
-- Le PID vient du nom de fichier. Si le JSON contient un `pid` présent et non nul qui en diffère, on ignore le fichier.
-- Assainissement à la lecture : dans `Name`, `Cwd`, `Kind`, `RawStatus` et `WaitingFor`, les caractères de contrôle (`unicode.IsControl`, ESC compris) sont retirés. `WaitingFor` est en plus limité à 32 runes.
+**Lecture des volets et clients**
+- Formats `-F` séparés par `\t`.
+- `Panes` ignore les sessions préfixées `claude-tower-view-` et **déduplique par `pane_id`**.
+- `Clients` ignore les clients des sessions de vue.
+- Une session est « affichée » (`Attached`) si un client est attaché à la même session ou à une session du même groupe (`#{session_group}`), quelle que soit la fenêtre courante de ce client.
 
-**Vivacité et filtrage** : on ignore la session dans les cas suivants.
-- Le processus n'est pas vivant. `procAlive` vérifie que `/proc/<pid>/stat` existe et que son champ 22 vaut `procStart` ; si `procStart` est vide, l'existence du processus suffit. La découpe de la ligne se fait dans une fonction pure `parseStartTime(statLine string) (string, bool)` (index 19 après la dernière `)`, voir plus haut).
-- `kind` vaut `daemon` ou `daemon-worker`, ou `spare` vaut `true`. Un `kind` vide, `interactive`, `bg` ou toute autre valeur est conservé.
+**Collage : `Paste`**
+0. `Sanitize(text)` (fonction pure) : CRLF et CR seuls deviennent LF, puis tous les contrôles C0 et C1 sont retirés sauf `\n` et `\t` (ESC compris). Le collage ne dépend ainsi pas de l'assainissement propre à chaque version de tmux ;
+1. `if-shell -F -t <pane> '#{pane_in_mode}' 'send-keys -t <pane> -X cancel'` ;
+2. `load-buffer -b claude-tower-<n> -`, texte sur l'entrée standard ;
+3. `paste-buffer -p -d -b claude-tower-<n> -t <pane>`, sans `-S` ;
+4. 50 ms d'attente ;
+5. `send-keys -t <pane> Enter`.
 
-**Normalisation de l'état**
+Un mutex **par volet** (table globale du paquet, clé socket + `%N`) empêche deux collages de s'entrelacer. Le tampon s'appelle `claude-tower-<pid>-<n>`. Si `paste-buffer` échoue, `delete-buffer` le supprime.
 
-| `status` | `State` |
-| --- | --- |
-| `busy`, `shell` | `StateBusy` |
-| `waiting` | `StateWaiting` |
-| `idle` | `StateIdle` |
-| toute autre valeur | `StateUnknown` (on garde `RawStatus`) |
+**Sessions de vue**
+- `NewViewSession(pane)` :
+  - note le volet actif de la fenêtre (`display-message -p -t <window> '#{pane_id}'`) ;
+  - `new-session -d -t <SessionID> -s claude-tower-view-<pid>-<n>`, puis `set-option -t <id de la vue> status off` ;
+  - `select-window -t <id de la vue>:<WindowID>`, puis `select-pane -t <pane>` ;
+  - renvoie `ViewSession{ID, Name, PreviousActive}`.
+  - Elle **ne pose pas** `destroy-unattached` (voir `ptyterm`).
+- `RestoreActivePane` remet le volet noté s'il existe encore.
+- `SweepViewSessions` tue les sessions `claude-tower-view-*` sans client.
+- Toutes les cibles sont des identifiants (`$N`, `@N`, `%N`).
 
-**Volet tmux** : `TmuxPane` est la partie après le dernier `.`, seulement si elle correspond à `^%[0-9]+$`.
+#### `internal/locate`
 
-Le tri n'est pas le rôle de ce paquet : voir `view`.
+- `Tree` (PID → PPID) se lit une seule fois par cycle. Linux : `/proc/*/stat`, champ ppid à l'index 1 après la dernière `)`. macOS : `ps -A -o pid=,ppid=`.
+- `Match(sessions, panes, tree) map[int]tmux.Pane` rattache une session au volet dont `pane_pid` est le PID de la session ou l'un de ses ancêtres (au plus 32 niveaux).
+- `Ancestors(pid)` renvoie la chaîne des ancêtres.
 
-#### `internal/transcript`
+#### `internal/hosting`
+
+**Injection** : tout passe par une valeur `Hosting{SocketDir, ConfigDir, Self string; Tmux tmux.Runner; Bin string; Env []string; ClaudeConfigDir string}`, construite par `core.Options` ou par `cli`. `Self` est le chemin du binaire `claude-tower` utilisé pour `exec-env` : `os.Executable()` en vrai, le binaire de test en test. Les tests ne touchent donc jamais aux vrais dossiers. Le `TestMain` des tests d'intégration délègue `exec-env` à `cli`.
+
+**Socket privée** : `PrivateSocket() (string, error)` donne la valeur par défaut de `SocketDir`.
+- Linux : `$XDG_RUNTIME_DIR/claude-tower/tmux.sock`, sinon `~/.local/state/claude-tower/tmux.sock`.
+- macOS : `~/Library/Application Support/claude-tower/tmux.sock`.
+- Le dossier est créé en `0700`. S'il existe, `Lstat` vérifie qu'il appartient à l'utilisateur, qu'il est en `0700` et que ce n'est pas un lien symbolique ; sinon, erreur.
+
+**Configuration** (`~/.config/claude-tower/` ; macOS : `~/Library/Application Support/claude-tower/`)
+- `config.json` : `{"claudeCommand": ["claude"], "tmuxTmpDir": "", "claudeConfigDir": ""}`. `claudeCommand[0]` est la commande (chemin absolu possible). Les éléments suivants sont des arguments placés avant ceux de l'utilisateur. `tmuxTmpDir` remplace `TMUX_TMPDIR` pour trouver les serveurs de l'utilisateur.
+- `EnsureConfig()` écrit `tmux.conf`, et fait `source-file` si le serveur privé tourne. Elle est appelée par l'application au démarrage **et par `NewSession`**, avant de démarrer le serveur. Contenu :
+
+```tmux
+set -g status off
+set -g prefix None
+set -g mouse on
+set -g history-limit 50000
+set -g escape-time 0
+set -g extended-keys on
+set -g focus-events on
+set -g default-terminal tmux-256color
+set -g window-size latest
+```
+
+Si `infocmp tmux-256color` échoue, on remplace `tmux-256color` par `screen-256color`.
+
+**Environnement de la session**
+- `SessionEnv(base []string, configDir string) []string` : tout `base` sauf `TMUX`, `TMUX_PANE`, `TERM`, `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`, `COLUMNS` et `LINES`. Pour une session lancée **depuis l'application**, on y pose `CLAUDE_CONFIG_DIR=<dossier lu par l'application>` (`$CLAUDE_CONFIG_DIR`, sinon la clé `claudeConfigDir` de `config.json`, sinon `~/.claude`). Pour `run`, la valeur de l'appelant est gardée telle quelle, et `LANG=C.UTF-8` (`en_US.UTF-8` sous macOS) si aucune locale UTF-8 n'est définie.
+- `LoginShellEnv(ctx)` : `$SHELL -ilc 'env -0'`, avec un délai de 10 s. Il ne sert que si l'application est lancée sans `TERM` (lanceur graphique). Le résultat est fusionné **sous** l'environnement courant, puis mis en cache pour la vie du processus.
+- **Transmission sans `argv`** :
+  - l'environnement est écrit dans un fichier créé par `os.CreateTemp` dans le dossier `0700` de la socket privée, chaque variable séparée par un octet NUL. Il y a un fichier par tentative, supprimé sur tout chemin d'échec de `NewSession` ;
+  - la commande de la session est `<chemin de claude-tower> exec-env <fichier> -- <claude résolu> <args…>` ;
+  - `exec-env` (dans `internal/cli`) lit le fichier et le supprime. Il construit l'environnement final avec les variables du fichier, mais garde de son propre environnement `TERM`, `TMUX`, `TMUX_PANE` et `COLORTERM`, posées par tmux dans le volet. Puis `syscall.Exec`.
+  - Seul le chemin du fichier apparaît dans les arguments.
+
+**`NewSession(ctx, dir string, args []string, env []string) (Pane, error)`**
+- **Résolution de claude** :
+  1. `claudeCommand[0]` s'il est absolu et exécutable ;
+  2. sinon `exec.LookPath` avec le `PATH` de `env` ;
+  3. sinon `$SHELL -ilc 'command -v <nom>'` (10 s), dont la sortie doit être un chemin absolu exécutable ;
+  4. sinon, erreur « claude introuvable : réglez claudeCommand dans <chemin> ».
+- **Création** : `new-session -d -P -F '#{session_id}\t#{pane_id}' -x 200 -y 50 -c <dir> -s <nom> -- <commande exec-env…>`.
+  - Le serveur est démarré avec `-f <tmux.conf>`.
+  - Nom : `basename(dir)`, avec `.` et `:` remplacés par `-`.
+  - Si tmux répond « duplicate session », on réessaie avec `-2`, `-3`, etc. (au plus 50 essais).
+- **Vérification** : après 1 s, si le volet n'existe plus, erreur « la session s'est arrêtée immédiatement ».
+
+**`Run(args []string) error`** (`claude-tower run`)
+- Si `$TMUX` est défini : `syscall.Exec` du claude résolu, avec `args`.
+- Sinon : `NewSession(cwd, args, SessionEnv(os.Environ(), configDir))`, puis `syscall.Exec` de `tmux -S <privé> attach -t <session_id>`.
+
+**`Kill(ctx, pane Pane) error`**
+- Refusé hors serveur privé.
+- Tue d'abord les sessions de vue groupées avec la session, puis la session elle-même.
+
+#### `internal/focus`
+
+`Raise(pids []int) error` met au premier plan la fenêtre du premier PID de la liste qui en a une. `Supported() bool` dit à l'avance si c'est possible.
+- **X11** (`DISPLAY` défini, `WAYLAND_DISPLAY` vide), avec `jezek/xgb` : on parcourt `_NET_CLIENT_LIST` et `_NET_WM_PID`, puis on envoie `_NET_ACTIVE_WINDOW` (source 2). Pour un terminal qui gère plusieurs fenêtres (gnome-terminal), c'est la première trouvée qui passe au premier plan : limite connue.
+- **macOS** : le premier PID dont `ps -o comm= -p` contient `.app/`, puis `osascript -e 'tell application "System Events" to set frontmost of (first process whose unix id is <pid>) to true'`. L'erreur éventuelle est renvoyée telle quelle (autorisations).
+- **Sinon** : `ErrUnsupported`.
+
+#### `internal/core`
 
 ```go
-type Finder struct { /* cache sessionID → path, taille, mtime, texte ; mutex */ }
-
-type Activity struct {
-    Text      string // "" when nothing retained
-    TurnEnded bool   // the last turn-relevant record is an end-of-turn marker
+type Card struct {
+    PID, Order   int    // Order: index in StartedAt-then-PID order
+    Name, State, Label, Since, Cwd, Activity string
+    InTmux, Private, Attached, CanPrompt bool
+    PromptReason string // French reason when CanPrompt is false
 }
+type Screen struct{ Lines []string; Width, Height int; Hash string } // Hash covers Lines, Width and Height
+type FocusResult struct{ Mode, Warning string }                     // Mode: "external" | "embedded"
 
-func NewFinder(configDir string) *Finder
-func (f *Finder) Last(sessionID string) Activity // zero Activity when unknown or not found
+func New(opts Options) (*Core, error)               // checks tmux binary and version
+func (c *Core) Cards(ctx) ([]Card, error)
+func (c *Core) Screen(ctx, pid, maxLines int) (Screen, error)
+func (c *Core) Prompt(ctx, pid int, text string) error
+func (c *Core) Focus(ctx, pid int) (FocusResult, error)
+func (c *Core) NewSession(ctx, dir string) error
+func (c *Core) Kill(ctx, pid int) error
+func (c *Core) PaneOf(pid int) (tmux.Pane, bool)    // from the last snapshot
 ```
 
-**Recherche du fichier**
-- `sessionID` doit correspondre à `^[0-9a-fA-F-]{8,64}$`, sinon renvoyer `""` sans chercher.
-- Recherche sans `filepath.Glob` (le dossier de config pourrait contenir `[`, `*` ou `?`) : `os.ReadDir(<configDir>/projects)`, puis `os.Stat` de `<sous-dossier>/<sessionID>.jsonl` pour chaque sous-dossier. On garde le premier trouvé.
-- On ne met en cache un chemin qu'une fois le fichier trouvé : un transcript absent est recherché de nouveau à l'appel suivant.
-- Si le `stat` d'un chemin en cache échoue (fichier supprimé ou renommé), on oublie l'entrée et on refait la recherche.
-- On ne relit le fichier que si sa taille ou son mtime a changé ; sinon on renvoie le texte en cache.
-- `Finder` est protégé par un `sync.Mutex`, car la TUI l'appelle depuis des `tea.Cmd`.
-- Points d'injection pour les tests, en champs non exportés initialisés par `NewFinder` : la liste des tailles de fenêtre (`[]int64{256 << 10, 1 << 20, 4 << 20}` par défaut, quelques dizaines d'octets en test) et la fonction de lecture de la fin du fichier, qui peut compter ses appels. Les tests de cache changent le mtime avec `os.Chtimes`.
+**Instantané**
+- `Cards` fait un cycle complet :
+  1. le registre ;
+  2. les serveurs (dossier tmux + socket privée) ;
+  3. les volets et clients **en parallèle par serveur**, un serveur en échec étant ignoré ;
+  4. un `Tree` ;
+  5. `Match` ;
+  6. `Finder.Retain` et `Finder.Last`.
+- Le résultat est gardé comme **dernier instantané**, protégé par un mutex.
 
-**Lecture de la fin du fichier**
-- Lire une fenêtre de fin de fichier de la première taille. Si aucun enregistrement retenu n'y est trouvé et que le début du fichier n'est pas atteint, recommencer avec la taille suivante. Au-delà de la dernière, renvoyer `""`.
-- Quand la fenêtre ne commence pas au début du fichier, la lecture démarre un octet plus tôt (`offset-1`) pour connaître l'octet précédent. La première ligne n'est écartée que si cet octet n'est pas `\n`.
-- Parcourir les lignes de la fin vers le début. Les lignes non JSON sont ignorées.
+**`Screen`** : volet du dernier instantané, puis `Capture`, puis les `maxLines` dernières lignes non vides de l'écran (le `\n` final est retiré). Pas de nouveau cycle.
 
-**Choix de l'enregistrement** : le premier enregistrement retenu donne le texte.
-- Ignorer tout enregistrement dont `type` n'est ni `assistant` ni `user`, et tout enregistrement avec `isMeta`, `isCompactSummary` ou `isVisibleInTranscriptOnly` à `true`.
-- `assistant` dont le contenu a au moins un `tool_use` : on prend le dernier `tool_use` du message et on affiche `"<Name>: <arg>"`. L'argument dépend de l'outil :
-  - Bash : `command` ;
-  - Read, Edit, Write : `file_path` ;
-  - Grep, Glob : `pattern` ;
-  - Agent : `description` ;
-  - autre outil, ou argument absent : seulement `"<Name>"`.
-- `assistant` sans `tool_use`, avec un bloc `text` non vide : la première ligne non vide du dernier bloc `text`.
-- `user` dont `content` est une chaîne qui, une fois les blancs de début retirés, ne commence ni par `<`, ni par `[Request interrupted`, ni par `[Image` : `"› " + première ligne non vide`.
-- `user` dont `content` est un tableau contenant un bloc `text` qui satisfait la même règle : même chose avec ce bloc. Un tableau qui ne contient que des `tool_result`, des images ou des textes exclus est ignoré.
-- Tout le reste est ignoré.
+**`PromptReason`**, dans l'ordre :
+1. « session hors tmux » ;
+2. « attend une autorisation » (`waitingFor` = `permission prompt`) ;
+3. « attend une réponse (<waitingFor>) » ;
+4. « état inconnu » pour un statut autre que `idle`, `busy` ou `shell`.
 
-**Fin de tour (`TurnEnded`)** : pendant le même parcours de la fin vers le début, on regarde le premier enregistrement qui est soit `assistant`, soit `user` (y compris `isMeta` et résumés de compactage), soit `system` avec `subtype` égal à `turn_duration`. `TurnEnded` vaut `true` seulement si c'est ce `system/turn_duration`. Contexte : Claude Code laisse le registre en `busy` tant que des shells ou agents tournent en arrière-plan, même quand le tour est fini et que la session attend un message ; le marqueur `turn_duration` est écrit à chaque fin de tour.
+**`Prompt`**
+- Refuse un texte vide après `TrimSpace`.
+- Relit **le seul fichier de registre** de la session juste avant `Paste` ; refuse si le statut n'est plus autorisé, ou si le volet n'existe plus.
 
-**Mise en forme** : remplacer toute suite de blancs ou de caractères de contrôle par une seule espace, puis retirer les espaces de début et de fin. Pas de troncature à ce niveau : elle dépend de la largeur d'affichage.
+**`Focus`** : une fonction pure testée seule.
+- Dans tmux, au moins un client, et `focus.Supported()` : d'abord `Raise(Ancestors(PID du client))` sur le client d'`Activity` maximale, puis, **seulement si `Raise` réussit**, `SwitchClient`. Le résultat est `external`. Si `Raise` échoue : `embedded` + `Warning` (la raison), sans rien basculer.
+- Dans tmux, sans client ou sans prise en charge : `embedded`, **sans basculer** aucun client.
+- Hors tmux : `Raise(Ancestors(PID))`, ou l'erreur « impossible d'afficher le terminal de cette session ».
 
-#### `internal/view`
+#### `internal/cli`
 
-**Formatage**
-- `type Display int` : `DisplayUnknown` (valeur nulle), `DisplayWaiting`, `DisplayBusy`, `DisplayBackground`, `DisplayIdle`. `DisplayOf(s registry.Session) Display` : Busy avec `TurnEnded` → Background ; sinon la correspondance directe de `State`.
-- `Icon(Display) string` : Busy `●`, Waiting `!`, Background `◐`, Idle `○`, Unknown `?`.
-- `Label(s registry.Session) string` : Busy → `travaille` (`shell` si `RawStatus` vaut `shell`) ; Waiting → `attend` suivi de ` (<WaitingFor>)` si non vide ; Background → `fini · fond` ; Idle → `fini` ; Unknown → `RawStatus`, ou `?` s'il est vide.
-- `Duration(since, now time.Time) string`. Retourne `""` si `since` est nul. Les durées négatives valent 0. Paliers :
-  - `<60s` → `"42s"` ;
-  - `<60m` → `"7m"` ;
-  - `<24h` → `"1h05"` ;
-  - sinon `"3j"`.
-- `DisplayName(s registry.Session) string` :
-  - nom de base : `Name` s'il est non vide ; sinon `filepath.Base(Cwd)` si `Cwd` est non vide et que le résultat n'est ni `"."` ni `"/"` ; sinon `"pid <PID>"` ;
-  - les caractères de contrôle sont retirés ;
-  - le nom est tronqué à 16 colonnes d'affichage avec `ansi.Truncate(nom, 16, "…")`.
-- `ShortPath(cwd, home string) string` : si `home` est non vide et que `cwd == home`, renvoie `~` ; si `cwd` commence par `home + "/"`, remplace ce préfixe par `~/`. Sinon `cwd` inchangé.
+- `Main(args []string, …) int`, appelé par `main.go` quand `os.Args[1]` est une sous-commande.
+- Si le premier argument est `run`, la suite est transmise **sans analyse** à `hosting.Run`. Même chose pour `exec-env`.
+- `list` (avec une colonne `privé`, `tmux` ou `hors tmux`) et `bar` reprennent le code et les tests actuels de `main.go`. `list` fonctionne même sans tmux (colonne `?`).
+- `internal/tui` et `internal/tmuxctl` sont supprimés.
+- `main.go` au lot A : appelle `cli.Main`. Sans sous-commande, il affiche « interface graphique : lot B ».
 
-**Tri**
-- `SortByName(ss)` : `DisplayName` sans tenir compte de la casse, puis `StartedAt`, puis `PID`. C'est l'ordre de la barre, stable d'un rafraîchissement à l'autre.
-- `SortByUrgency(ss)` : selon `DisplayOf`, Waiting, Busy, Unknown, Background, Idle, puis le même ordre que `SortByName`. C'est l'ordre du popup.
-- Les deux fonctions trient une copie et ne modifient pas leur argument.
+#### Tests du lot A
 
-**`Bar(ss []registry.Session, now time.Time, maxWidth int) string`** : sessions triées par nom, séparées par deux espaces, au format de style tmux.
-Le style dépend de `DisplayOf` :
-- Busy : `#[fg=yellow]● <nom> <durée>#[default]` ;
-- Background : `#[fg=cyan]◐ <nom>#[default]` (sans durée) ;
-- Waiting : `#[fg=red,bold]! <nom> <durée>#[default]` ;
-- Idle : `#[fg=colour244]○ <nom>#[default]` (sans durée) ;
-- Unknown : `#[fg=colour244]? <nom>#[default]`.
-- Si la durée est vide, on n'ajoute pas l'espace qui la précède.
-- Dans les noms, échapper `#` en `##`.
-- Aucune session : chaîne vide.
-- Largeur : on mesure la largeur visible (sans les `#[...]`, `##` comptant pour 1). Si elle dépasse `maxWidth`, on regroupe d'abord toutes les sessions Idle, Background et Unknown en un seul élément `#[fg=colour244]○ <n>#[default]` placé en fin de barre. Si c'est encore trop large, on regroupe aussi les Busy en `#[fg=yellow]● <n>#[default]`, placé juste avant. Les sessions Waiting restent toujours affichées une par une. `maxWidth <= 0` désactive la limite.
+**Unitaires**, avec un `Runner` injecté et les arguments exacts vérifiés :
+- `Paste` : ordre des commandes, texte par l'entrée standard et absent des arguments, mutex ;
+- `NewViewSession` (pas de `destroy-unattached`), `RestoreActivePane`, `SweepViewSessions` ;
+- `NewSession` : identifiants, réessai, commande introuvable, résolution par le shell qui renvoie un alias (refusée) ;
+- `Kill` (refus hors serveur privé, vues tuées d'abord) ;
+- `SessionEnv`, `LoginShellEnv` (fusion), `PrivateSocket` (dossier d'un autre propriétaire, mauvais mode, lien symbolique : refusés), `FindBinary`, `CheckVersion` (`3.0a`, `3.1`, `3.2`, `3.2a`, `3.3a`, `3.8`, `next-3.9`, et `master` accepté) ;
+- analyse `-F` avec déduplication et exclusion des vues ; `Match` ; analyse de `ps` ;
+- décision de `Focus` ; ordre de `PromptReason` ; `Prompt` refusé quand le fichier de registre passe à `waiting` après `Cards` ;
+- `cli` : `run --resume -c --model x` transmis tel quel, et `exec-env` (environnement appliqué, fichier supprimé) via une fonction d'exécution injectée ;
+- tous les tests repris de `main_test.go` (`bar`, `list`, analyse des arguments).
+
+**Intégration** avec un vrai tmux :
+- socket dans `os.MkdirTemp("/tmp", "ct")`, `kill-server` et suppression du dossier en `t.Cleanup` ;
+- tests sautés si `tmux` est absent.
+
+La commande des volets de test est le **binaire de test lui-même**, en mode auxiliaire (variable d'environnement lue dans `TestMain`) : il passe le terminal en mode brut, active le collage entre crochets (`\e[?2004h`), puis écrit tous les octets reçus dans un fichier.
+
+Cas couverts :
+- `Paste` d'un texte de 50 Kio, d'un texte sur plusieurs lignes et d'un texte contenant ESC : le fichier contient `\e[200~`, le texte (ESC neutralisé, LF devenu CR), `\e[201~`, puis `\r` ;
+- `Paste` sur un volet en copy-mode : même résultat ;
+- `NewViewSession` : `Panes` ne renvoie le volet qu'une fois, le volet actif d'origine est restauré par `RestoreActivePane`, et `SweepViewSessions` tue une vue sans client ;
+- `Servers` puis `Panes` sur une socket morte : ignorée ;
+- `NewSession` avec le mode auxiliaire « écrire l'environnement » : une variable de l'appelant arrive, `TERM`, `TMUX` et `TMUX_PANE` sont présents, et le fichier d'environnement a disparu.
+
+**`focus`** : seules les fonctions pures sont testées.
+
+### Lot B (Sonnet, effort high) : application Wails et plein écran
+
+Prérequis : lot 0 et lot A faits.
 
 #### `main.go`
 
-**Ligne de commande**
-- Une fonction pure `parseArgs(args []string) (opts, error)` : le premier argument qui n'est ni un flag ni la valeur d'un flag est la sous-commande. Les flags `--dir`, `--max-width` et `--client` (déclaré dès le lot 1, utilisé seulement par la TUI au lot 2) sont acceptés avant comme après la sous-commande. Implémentation : un seul `flag.FlagSet` (en `flag.ContinueOnError`, sortie redirigée), appelé une première fois, puis une seconde fois sur les arguments restants après la sous-commande.
-- Plus d'un argument positionnel : erreur d'usage.
-- `main` se réduit à `os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, os.Getenv))`. La fonction `run(args []string, stdout, stderr io.Writer, getenv func(string) string) int` fait tout le reste et se teste directement.
+- Si `os.Args[1]` est une sous-commande connue : `os.Exit(cli.Main(...))`.
+- Sinon, l'application : fenêtre `claude-tower` de 1400×900, et `//go:embed all:frontend/dist`.
+- C'est le seul fichier qui importe Wails.
+- Les liaisons `frontend/wailsjs/` sont générées par `wails generate module -tags webkit2_41`, puis committées.
 
-**Dossier lu**
-- `--dir <chemin>` si le flag est fourni ;
-- sinon `$CLAUDE_CONFIG_DIR` s'il est non vide ;
-- sinon `~/.claude`.
+#### `internal/app`
 
-Un seul dossier : pas de liste, pas d'autre variable d'environnement.
+Les appels propres à Wails passent par deux interfaces : `Emitter` (`Emit(name string, data any)`) et `Dialogs` (`ChooseDirectory() (string, error)`).
 
-**Sous-commandes**
-- `claude-tower bar` : écrit `view.Bar(…, maxWidth)` puis un saut de ligne, avec `--max-width` (100 par défaut). Elle n'appelle `Finder.Last` que pour les sessions Busy, afin de remplir `TurnEnded` ; jamais pour les autres. En cas d'erreur, rien sur stdout, le message sur stderr, et le code de sortie est 0, pour ne pas polluer la barre tmux.
-- `claude-tower list` : une ligne par session, en texte brut, triée par urgence, pour déboguer. Chaque ligne contient l'icône, le nom affiché, le libellé, la durée, le volet, le cwd raccourci et la dernière activité.
-- Sans sous-commande : au lot 1, comme `list` ; le lot 2 branche la TUI à la place.
-- Sous-commande inconnue : message d'usage sur stderr, code 2.
+Méthodes exposées au frontend :
+- `Cards()`, `Screen(pid, maxLines)`, `Prompt(pid, text)`, `Focus(pid)`, `Kill(pid)` ;
+- `NewSession()` : dialogue de choix du dossier, puis `core.NewSession`. Une annulation n'est pas une erreur ;
+- `OpenTerminal(pid, cols, rows) (id, error)`, `TermReady(id)`, `TermInput(id, data)`, `TermResize(id, cols, rows)`, `CloseTerminal(id)`.
+
+Cycle de vie :
+- **Démarrage** : `core.New` (si tmux est absent ou trop ancien, l'erreur est affichée par le frontend), `EnsureConfig`, puis `SweepViewSessions` sur chaque serveur.
+- **`OnShutdown`** : ferme tous les terminaux.
+
+#### `internal/ptyterm`
+
+**`Open`**
+- `core.PaneOf`, puis `NewViewSession`.
+- Puis `tmux -S <socket> attach -t <id de la vue> ";" set-option -t <id de la vue> destroy-unattached on` (le `;` est **un argument séparé** passé à `exec.Command`, pas la chaîne `\;`), dans un PTY (`creack/pty`) de la taille demandée.
+- Environnement du PTY : celui de l'application, avec `TERM=xterm-256color`, `COLORTERM=truecolor`, et une locale UTF-8 si aucune.
+- En cas d'échec après `NewViewSession` : `KillSession` de la vue et `RestoreActivePane`.
+- L'identifiant est un compteur unique.
+
+**Sortie vers le frontend**
+- Les octets sont mis en **tampon jusqu'à `TermReady(id)`**. Ensuite, ils partent par l'évènement `term:<id>:data` (base64), par paquets d'au plus 16 Kio ou toutes les 16 ms.
+- `term:<id>:exit` est émis après la sortie restante. Si la fin arrive avant `TermReady`, il est émis à `TermReady`.
+
+**`Close`** : tue le processus, puis `KillSession` de la vue (sans erreur si elle a déjà disparu), puis `RestoreActivePane`.
+
+**Tests**, avec un serveur tmux de test et un `Emitter` factice :
+- rien n'est émis avant `TermReady`, puis le tampon arrive ;
+- `echo $((6*7))` + Entrée fait apparaître `42` ;
+- `TermResize` est appliqué ;
+- `Close` fait disparaître la vue, après une **vraie attache** ;
+- tuer le processus `attach` seul fait aussi disparaître la vue (`destroy-unattached`) ;
+- un environnement vide fonctionne (TERM forcé) ;
+- `internal/app` : l'annulation du dialogue ne crée pas de session.
+
+### Lot C (Sonnet, effort high) : frontend
+
+Prérequis : lot B fait.
+
+#### Grille
+
+- Ordre `Order` (fixe).
+- Le nombre de colonnes vaut `ceil(sqrt(n))`, borné à 4, puis réduit tant que les cartes font moins de 420 px de large. Au-delà, on fait défiler verticalement.
+- La sélection suit le PID. Si la session sélectionnée disparaît, on prend la voisine à la même position.
+
+#### Carte
+
+**En-tête et activité**
+- En-tête : nom, libellé, durée, dossier. Puis une ligne d'activité.
+- Le texte venant des sessions est toujours inséré comme texte, **jamais en `{@html}`**.
+
+**Corps, session dans tmux**
+- Un xterm.js en lecture seule : `disableStdin`, `scrollback: 0`, `addon-unicode11`, police de 11 px, `cols` et `rows` calculés pour remplir le corps de la carte.
+- `Screen(pid, rows)` renvoie les dernières lignes.
+- Écriture : `\x1b[?7l` (pas de retour à la ligne automatique, donc lignes coupées à droite) puis `\x1b[H`, puis chaque ligne suivie de `\x1b[K\r\n` (la dernière sans `\r\n`), puis `\x1b[J`.
+- Mise à jour seulement si `Hash` change.
+
+**Corps, session hors tmux** : les dernières lignes d'activité, et « hors tmux : lecture seule ».
+
+**Cadre** : couleur selon l'état, plus épais sur la carte sélectionnée.
+
+#### Rafraîchissement
+
+- `Cards()`, puis `Screen()` des cartes visibles (`IntersectionObserver`), en série.
+- Le cycle suivant est programmé 1 s **après la fin** du précédent (`setTimeout`).
+- Pause quand la fenêtre est masquée (`document.hidden`) ou en plein écran.
+
+#### Souris et clavier dans la grille
+
+- **Clic** : sélectionne la carte.
+- **Double-clic** ou `Entrée` : `Focus`. Si le résultat est `embedded`, ouvrir le plein écran. Afficher `Warning` dans un bandeau temporaire.
+- **Flèches et `h` `j` `k` `l`** : déplacement selon la géométrie de la grille.
+- `o` : plein écran (session dans tmux).
+- `i` ou `/` : met le curseur dans la barre de prompt.
+- `n` : nouvelle session.
+- `x` : arrêter la session (privée seulement), avec confirmation qui affiche le nom et le PID.
+
+#### Barre de prompt
+
+- Zone de texte en bas : `Entrée` envoie, `Maj+Entrée` passe à la ligne, `Échap` revient à la grille.
+- Désactivée quand `CanPrompt` est faux, avec `PromptReason` affichée.
+- **Pendant l'envoi**, la zone est désactivée. En cas de succès, elle se vide. En cas d'erreur, le message s'affiche et le texte est gardé.
+
+#### Plein écran
+
+- xterm.js avec `addon-fit`, `addon-unicode11` et `addon-clipboard` (OSC 52).
+- Séquence : `OpenTerminal`, puis `EventsOn("term:<id>:data")` et `EventsOn("term:<id>:exit")`, puis `TermReady(id)`.
+- Les données sont décodées du base64 en `Uint8Array`, puis passées à `term.write(bytes)`.
+- Les frappes passent par `TermInput` **en série** : un appel ne part qu'après le retour du précédent, et les frappes arrivées entre-temps sont regroupées. En effet, l'ordre d'exécution des appels liés de Wails n'est pas garanti. Les redimensionnements passent par `TermResize`. `Maj+Entrée` envoie `\x1b\r`.
+- Un bouton et `Ctrl+Maj+Q` (jamais transmis à la session) reviennent à la grille : `CloseTerminal`, désabonnement, puis destruction du terminal.
+- `term:<id>:exit` ramène aussi à la grille.
+
+#### Thème et erreurs
+
+- Thème sombre, police monospace du système.
+- Une erreur de `core.New` (tmux absent ou trop ancien) s'affiche en page d'accueil, avec la commande d'installation.
 
 #### Tests
 
-Bibliothèque standard `testing`, fixtures inventées dans `testdata/` ou construites dans `t.TempDir()`, sans donnée réelle. `Alive`, `ReadFile` et `now` sont injectés.
+La logique est dans des modules TypeScript purs, testés avec vitest :
+- navigation (bords, ligne incomplète, redimensionnement) ;
+- suivi de la sélection, et disparition de la carte sélectionnée ;
+- état de la barre de prompt (désactivée pendant l'envoi, texte gardé en cas d'erreur) ;
+- classe du cadre selon l'état ;
+- calcul de `cols` et `rows` du corps ;
+- séquence d'écriture du corps ;
+- programmation du rafraîchissement ;
+- décodage base64 en octets, avec un caractère multi-octets coupé entre deux paquets ;
+- séquence d'ouverture du plein écran, avec des liaisons factices.
 
-**Registre**
-- fichier valide, avec et sans `waitingFor` ;
-- chaque valeur de `status` : `busy`, `shell`, `idle`, `waiting` et une valeur inconnue ;
-- JSON invalide, avec et sans succès à la relecture ;
-- fichier `.key` ignoré ;
-- dossier `sessions/` absent ;
-- processus mort ou `procStart` différent ;
-- `kind` `daemon` ou `daemon-worker`, et `spare: true` ;
-- `tmux` absent ou malformé ;
-- `statusUpdatedAt` absent ;
-- `pid` du JSON différent du nom de fichier ; `procStart` en nombre ; champ de type inattendu ;
-- caractères de contrôle (ESC) dans `Name`, `Cwd` et `WaitingFor` ; `WaitingFor` trop long ;
-- `parseStartTime` sur une ligne `/proc/pid/stat` littérale dont le `comm` contient `") ("` et des espaces, avec la valeur attendue écrite en dur ; ligne trop courte ;
-- `procAlive` sur le PID du test (`os.Getpid()`) : vrai avec le starttime de `/proc/self/stat`, faux avec une valeur différente, faux pour un PID inexistant.
+En plus : `npm run check` et `npm run build`.
 
-**Transcript**
-- `tool_use` Bash, Read et Agent, outil inconnu, plusieurs `tool_use` dans un même message ;
-- texte assistant sur plusieurs lignes ;
-- prompt utilisateur en chaîne et en tableau avec un bloc `text` ;
-- enregistrements à ignorer : `isMeta`, `isCompactSummary`, chaîne commençant par `<task-notification>`, `[Request interrupted by user]`, `[Image: …]`, tableau ne contenant que des `tool_result`, types non retenus, ligne non JSON ;
-- `TurnEnded` : vrai quand le dernier enregistrement pertinent est `system/turn_duration` (même suivi d'enregistrements `attachment`, `mode`, etc.) ; faux quand un `assistant` ou un `user` (même `isMeta`) vient après ; faux sans transcript ;
-- avec de petites fenêtres injectées : première ligne de la fenêtre tronquée (écartée) ; fenêtre qui commence pile au début d'une ligne (gardée) ; dernier enregistrement plus long que la première fenêtre (trouvé grâce à l'élargissement) ; rien de retenu même dans la plus grande fenêtre (`""`) ;
-- transcript absent, puis créé : il est trouvé à l'appel suivant ;
-- transcript supprimé après avoir été mis en cache, puis recréé ailleurs : nouveau glob ;
-- cache : pas de relecture si le fichier n'a pas changé, relecture après une modification (`os.Chtimes`) ;
-- `sessionID` invalide.
+### Lot D (orchestrateur) : vérification réelle, documentation
 
-**View**
-- durées aux limites (59s, 60s, 59m, 60m, 24h), `since` nul, durée négative ;
-- `DisplayName` : repli sur le cwd puis le PID (`Cwd` vide et `Cwd == "/"`), caractères de contrôle, troncature avec des caractères multi-octets ;
-- `ShortPath` : `cwd == home`, sous-dossier de `home`, préfixe trompeur (`home=/home/alex`, `cwd=/home/alexis/zest`), `home` vide ;
-- ordres de tri avec des noms égaux et des casses différentes ;
-- `State` nul vaut `StateUnknown` ;
-- `DisplayOf` : Busy avec et sans `TurnEnded`, Idle avec `TurnEnded` (reste Idle) ;
-- `Bar` vide, échappement de `#`, absence de durée ;
-- `Bar` avec cinq sessions et une petite `maxWidth` : regroupement des Idle, puis des Busy, Waiting toujours visibles.
+**Vérifications sur le poste de l'utilisateur**, faites par l'utilisateur pour ce qui touche à ses sessions :
+- la grille et la lisibilité des corps de carte ;
+- un prompt (sur une ligne, sur plusieurs lignes, long) envoyé à une session lancée par l'application, pour confirmer que l'Entrée après le collage soumet bien ;
+- `claude-tower run --resume` dans Alacritty, puis fermeture de la fenêtre : la session reste dans l'application ;
+- `Entrée` sur une session de son tmux : bascule, premier plan, volet actif inchangé après le retour d'un plein écran ;
+- plein écran, `Maj+Entrée`, copier-coller, retour ;
+- arrêt d'une session privée ;
+- lancement depuis un lanceur de bureau, sans `TERM` : sessions trouvées, nouvelle session fonctionnelle. Après fermeture de l'application, les sessions privées restent ;
+- plein écran sur une session affichée dans son tmux : vérifier que le redimensionnement de sa fenêtre est acceptable (sinon, `attach -f ignore-size` pour les vues).
 
-**main**
-- `parseArgs` : `bar --dir X`, `--dir X bar`, `--dir X --client Y` sans sous-commande, sous-commande inconnue, deux positionnels.
-- `run` avec un dossier de config construit dans `t.TempDir()` : `bar` écrit la barre attendue ; `bar` sur un dossier `sessions/` illisible (`chmod 000`) sort en 0 avec stdout vide et un message sur stderr ; `bar` affiche `◐` pour une session `busy` dont le transcript se termine par `system/turn_duration`, et `●` sinon ; un transcript absent ou illisible laisse `●` ; `list` écrit une ligne par session ; sous-commande inconnue sort en 2 ; `$CLAUDE_CONFIG_DIR` (via `getenv`) est utilisé sans `--dir`, et `--dir` l'emporte.
+**Construction et documentation**
+- Construction : `wails build -tags webkit2_41`.
+- `Makefile` : `test` (Go `./internal/...` + build avec le tag + frontend), `build` et `install`.
+- **README** :
+  - installation (tmux 3.2 ou plus), `claude-tower run` et l'alias conseillé, `config.json` ;
+  - touches ;
+  - avec `mouse on`, `Maj` pour sélectionner du texte dans un terminal `run` ;
+  - limites : Wayland, terminaux hors tmux, gnome-terminal, format interne du registre, secrets visibles dans les cartes, un brouillon déjà tapé dans le prompt de claude part avec le message collé, sous macOS un PID réutilisé peut faire réapparaître une session morte, sessions `run` qui survivent à leur terminal, binaire lié à GTK et WebKit (y compris pour `bar` et `run`) ;
+  - **checklist macOS** pour le collègue testeur : installation, vivacité des sessions, `run`, premier plan (autorisations), socket privée, `tmux-256color`.
 
-### Lot 2 (Sonnet, effort medium) : TUI et saut tmux
+## Bloc commun des briefs (lots A, B, C)
 
-#### `internal/tmuxctl`
-
-```go
-func Jump(client, pane string, sessionPID int) error
-```
-
-- `pane` vide ou ne correspondant pas à `^%[0-9]+$` : renvoyer une erreur explicite (`session hors tmux`).
-- Si `client` commence par `#{`, c'est un format tmux non développé : le traiter comme vide.
-- Vérifier d'abord que le volet existe sur ce serveur et qu'il est bien celui de la session : `tmux display-message -p -t <pane> '#{pane_pid}'` doit réussir, et ce PID doit être `sessionPID` ou l'un de ses ancêtres. On remonte la chaîne des parents via le champ 4 (ppid) de `/proc/<pid>/stat`, soit l'index 1 après la dernière `)`, au plus 32 niveaux. Sinon, renvoyer l'erreur `volet introuvable sur ce serveur tmux`. Cela couvre les identifiants `%N` d'un autre serveur tmux.
-- Puis lancer une seule commande, `tmux switch-client [-c <client>] -t <pane>`, qui change à la fois de session, de fenêtre et de volet.
-- Les commandes passent par `exec.Command`, sans shell. Deux variables de paquet sont injectables pour les tests : `runCmd` (exécution d'une commande, renvoie la sortie) et `parentPID` (lecture du ppid).
-
-#### `internal/tui`
-
-Bibliothèques : bubbletea v1.3.10, lipgloss v1.1.0.
-
-**Modèle**
-- Contenu : sessions triées par `SortByUrgency`, activité par PID, `now` du dernier chargement, PID sélectionné, décalage de défilement, largeur, hauteur, client, intervalle de rafraîchissement (champ non exporté, 1 s par défaut, réduit en test), et deux erreurs distinctes : `jumpErr` (saut) et `loadErr` (chargement).
-- Deux fonctions injectées, fournies par `main.go` en vrai et par les tests en faux :
-  - `load func() (loadedMsg)`, où `loadedMsg` contient les sessions, les activités par PID, `now` (pris au moment du chargement) et une erreur éventuelle. Elle est appelée dans un `tea.Cmd`. La vraie version utilise `Reader.Sessions` puis `Finder.Last` pour chaque session (texte d'activité, et `TurnEnded` recopié dans la session).
-  - La TUI garde un seul `Finder` pendant toute sa vie. Ajouter à `transcript` une méthode `func (f *Finder) Retain(sessionIDs []string)` qui retire du cache les sessions absentes de la liste ; la vraie `load` l'appelle à chaque chargement avec les `SessionID` courants. Avec son test.
-  - `jump func(client, pane string, pid int) error`, appelée dans un `tea.Cmd` qui renvoie un `jumpDoneMsg{err}`. La vraie version est `tmuxctl.Jump`.
-- `Update` ne fait aucune entrée-sortie, et `View` n'appelle jamais `time.Now()` : les durées utilisent le `now` du modèle.
-- Rafraîchissement : `Init` lance le premier chargement. À la réception de `loadedMsg`, le modèle se met à jour puis arme un `tea.Tick` de l'intervalle, dont le message (`tickMsg`) lance le chargement suivant. Il n'y a donc jamais deux chargements en cours.
-
-**Sélection**
-- La sélection suit le PID, pas l'index.
-- Si la session sélectionnée disparaît, on sélectionne celle qui occupe maintenant le même index, borné à la fin de la liste.
-- Tant qu'aucun PID n'est sélectionné et que la liste n'est pas vide, on sélectionne la première session.
-
-**Affichage**
-- Le programme tourne en écran alternatif (`tea.WithAltScreen()`).
-- Chaque session occupe deux lignes :
-  1. `<n> <icône> <nom affiché>  <libellé>  <durée>  <cwd raccourci>`, où `<n>` est le rang de 1 à 9 dans la liste triée complète (deux espaces au-delà du 9e) ;
-  2. `  └ <dernière activité>`, ou une ligne vide si l'activité est vide.
-- Les deux lignes sont tronquées à la largeur en largeur d'affichage (`github.com/charmbracelet/x/ansi`, `ansi.Truncate` avec `…`), jamais avec `len`.
-- Tant qu'aucun `tea.WindowSizeMsg` n'est arrivé, la largeur vaut 80.
-- Couleurs : les mêmes que la barre, via lipgloss. La ligne sélectionnée est en inversé.
-- Défilement : le nombre de sessions visibles vaut `max(1, (hauteur - 2) / 2)`, et le décalage s'ajuste pour que la sélection reste visible.
-- Pied de page : `↑↓ choisir · 1-9 sélection · Entrée aller · q fermer`, remplacé par `jumpErr` s'il existe, sinon par `loadErr` s'il existe. `jumpErr` s'efface à la touche suivante, jamais sur un `loadedMsg`. `loadErr` est remplacé par l'erreur de chaque `loadedMsg` (donc effacé au chargement réussi suivant).
-- `View` ne dépasse jamais la hauteur : si la hauteur ne permet pas d'afficher une session et le pied de page, on tronque la sortie aux `hauteur` premières lignes.
-- Aucune session : afficher `Aucune session Claude en cours.`
-
-**Touches**
-- `↑`/`k` et `↓`/`j` : déplacer la sélection.
-- `1`…`9` : sélection de la session de ce rang dans la liste triée complète (le numéro affiché). Rang au-delà de la liste : rien. Ces touches sélectionnent seulement, elles ne déclenchent pas de saut.
-- `Entrée` : sans sélection, rien. Sinon, appeler `jump(client, pane, pid)` dans un `tea.Cmd`. Sur `jumpDoneMsg` sans erreur, quitter (`tea.Quit`). Avec une erreur, afficher le message dans le pied de page et rester ouvert.
-- `q`, `Échap`, `Ctrl-C` : quitter.
-
-**`main.go`** : sans sous-commande, lancer la TUI. Ajouter le flag `--client`, transmis à `Jump`.
-
-**Tests** (sans terminal)
-- `Update` avec des messages clavier, de taille et de chargement ;
-- avec un intervalle réduit : la commande renvoyée après `loadedMsg` produit un `tickMsg` ; celle renvoyée après `tickMsg` appelle `load` ;
-- `jumpErr` survit à un `loadedMsg` ;
-- suivi de la sélection après un retri ;
-- disparition de la session sélectionnée ; liste vide puis non vide ;
-- défilement, y compris avec une hauteur inférieure à 4 ;
-- chiffres dans et hors limites ;
-- `Entrée` : succès suivi de `tea.Quit` ; erreur affichée et popup resté ouvert, puis effacée à la touche suivante ; liste vide ;
-- erreur de chargement affichée puis effacée ;
-- troncature avec des caractères multi-octets ;
-- `View` sans session, et `View` déterministe pour un `now` donné ;
-- `Jump` : arguments passés à `runCmd`, client vide ou non développé, volet invalide, échec de `display-message`, `pane_pid` ancêtre de la session (succès), `pane_pid` sans lien (erreur), chaîne de parents interrompue.
-
-### Lot 3 (orchestrateur) : vérifications réelles et branchement tmux
-
-- **Makefile** : cibles `build`, `test` (`go vet ./... && go test ./...`) et `install` (`go build -o ~/.local/bin/claude-tower .`). C'est l'utilisateur qui lance `install`.
-- **V1, état « attend »** : lancer `command claude --permission-mode default` dans une fenêtre tmux, déclencher une demande d'autorisation, puis contrôler que `status` passe à `waiting` avec `waitingFor` et que la barre et le popup l'affichent.
-- **V1 bis, sessions parasites** : lancer `command claude -p "dis bonjour"` et regarder si un fichier de registre apparaît, avec quel `kind` et quel `entrypoint`. Si oui, ajouter le filtre correspondant au registre (petit correctif, avec son test).
-- **V2, saut depuis le popup, fait par l'utilisateur** : le test ouvre un popup et déplace un client tmux, donc l'orchestrateur ne le fait pas sur le client réel. Il donne la marche à suivre, et l'utilisateur vérifie que `Entrée` amène sur le volet choisi, y compris avec deux clients attachés. Ce que reçoit `--client` se voit dans la ligne de commande du processus (`ps -o args`).
-- **Lignes tmux** : à donner à l'utilisateur, à placer avant la ligne `run '…/tpm/tpm'`. L'orchestrateur ne les applique pas lui-même.
-
-```tmux
-set -g @tmux-dotbar-right true
-set -g @tmux-dotbar-status-right '#(/home/alexis/.local/bin/claude-tower bar --dir /home/alexis/.claude) '
-set -g status-right-length 120
-bind a run-shell "/usr/bin/tmux display-popup -E -c '#{client_name}' -w 90 -h 60% '/home/alexis/.local/bin/claude-tower --dir /home/alexis/.claude --client #{client_name}'"
-```
-
-  - `man tmux` ne garantit le développement des formats que pour `-T` de `display-popup`, pas pour sa commande : on passe donc par `run-shell`, qui développe `#{client_name}` avant de lancer `display-popup`.
-
-  - Le `set -g` (sans `-a`) reste idempotent au rechargement automatique de la config.
-  - `--dir` explicite : le serveur tmux peut avoir hérité d'un autre `CLAUDE_CONFIG_DIR`.
-  - Avec `status-justify absolute-centre`, une barre droite longue peut chevaucher la liste des fenêtres : on vérifie le rendu avec trois sessions, et on ajuste `--max-width` si besoin.
-- **README.md** court, qui couvre :
-  - le rôle de l'outil et son installation ;
-  - les lignes tmux ;
-  - les statuts reconnus (`busy`, `shell`, `idle`, `waiting`) ;
-  - la limite : le format du registre est interne à Claude Code ;
-  - un avertissement : la dernière activité peut afficher des commandes contenant des secrets.
-
-## Bloc commun des briefs (lots 1 et 2)
-
-> Dépôt : `/home/alexis/Projects/claude-tower` (dépôt git local, branche `main`, pas de remote). Ne pas committer : l'orchestrateur committe après revue. Plan : `/home/alexis/Projects/claude-tower/PLAN.md` ; exécute uniquement le lot indiqué en fin de brief.
+> Dépôt : `/home/alexis/Projects/claude-tower`, branche `desktop` (base : `main`). Ne pas committer ni merger : l'orchestrateur committe après revue. Plan : `/home/alexis/Projects/claude-tower/PLAN.md` ; exécute uniquement le lot indiqué en fin de brief.
 > Ne lance aucun sous-agent ni fork : fais le travail toi-même.
-> N'installe ni ne télécharge aucune dépendance. Toutes les commandes Go se lancent avec `GOPROXY=off GOFLAGS=-mod=readonly`. Ne lance jamais `go get` ni `go mod tidy`. S'il manque une dépendance, arrête-toi et signale-le.
-> Ne lis et n'écris rien dans `~/.claude`, `~/.claude-perso` ni `~/.claude-shared`. Les tests utilisent uniquement des fixtures inventées.
+> N'installe ni ne télécharge aucune dépendance. Commandes Go avec `GOPROXY=off GOFLAGS=-mod=readonly`. Jamais de `go get`, `go mod tidy`, `npm install`, ni de commande `wails` qui télécharge. S'il manque une dépendance ou une entrée de `go.sum`, arrête-toi et signale-le.
+> tmux : uniquement sur des sockets créées par les tests dans un dossier `os.MkdirTemp("/tmp", "ct")` (option `-S`), tuées en fin de test. Jamais de commande sur le serveur par défaut de l'utilisateur ni sur la socket privée de claude-tower.
+> Ne lis et n'écris rien dans `~/.claude`, `~/.claude-perso` ni `~/.claude-shared`. Les tests utilisent des fixtures inventées.
 > Commentaires de code en anglais. Ils décrivent le comportement actuel, au présent, et se comprennent en lisant le code seul : pas de référence externe (ticket, plan, PR), pas de date, pas d'historique. Pas de commentaire qui paraphrase le code : n'expliquer que ce que le code ne dit pas (contrainte, invariant, raison d'un choix). Une doc comment Go par identifiant exporté.
-> Go idiomatique, bibliothèque standard autant que possible (plus `github.com/charmbracelet/x/ansi` pour la largeur d'affichage), fonctions courtes, `gofmt`.
-> Le shell a des alias interactifs (`rm -i`, `ls` = eza) : utilise `command rm`, `command ls`.
-> Tests : `cd /home/alexis/Projects/claude-tower && GOPROXY=off GOFLAGS=-mod=readonly go vet ./... && GOPROXY=off GOFLAGS=-mod=readonly go test ./...` doivent passer.
+> Go idiomatique, fonctions courtes, `gofmt`. TypeScript strict.
+> Le shell a des alias interactifs (`rm -i`, `ls` = eza, `cat` = bat) : utilise `command rm`, `command ls`, `command cat`.
+> Tests : `cd /home/alexis/Projects/claude-tower && GOPROXY=off GOFLAGS=-mod=readonly go vet ./internal/... && GOPROXY=off GOFLAGS=-mod=readonly go test ./internal/... && GOPROXY=off GOFLAGS=-mod=readonly go build -o /dev/null .` (à partir du lot B : `go build -tags webkit2_41 -o /dev/null .`). À partir du lot C, en plus : `cd frontend && npx vitest run && npm run check && npm run build`.
 > Rapport final : fichiers créés ou modifiés, sortie des tests, écarts au plan et pourquoi.
-
-Partie propre au lot : « Exécute le lot 1 » ou « Exécute le lot 2 (le lot 1 est fait ; lis le code existant avant de commencer) ».
 
 ## Revues
 
 Pour chaque lot :
-- l'orchestrateur relit le diff, lance les tests, puis `claude-tower list` sur les vraies sessions ;
-- un agent Sonnet fait une revue fraîche, en ne recevant que l'objectif et l'emplacement du changement ;
-- un nouvel agent fait une re-revue des seuls correctifs.
+- l'orchestrateur relit le diff et lance les tests ;
+- une revue fraîche Sonnet, qui ne reçoit que l'objectif et l'emplacement du changement ;
+- une re-revue des seuls correctifs.
 
-Un commit par lot sur `main`.
+Un commit par lot sur `desktop`.
