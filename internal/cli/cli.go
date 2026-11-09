@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -81,6 +82,19 @@ func parseArgs(args []string) (opts, error) {
 	return o, nil
 }
 
+// Subcommands lists the subcommands that Main runs.
+var Subcommands = []string{"run", "exec-env", "bar", "list"}
+
+// IsCLI reports whether args, the command line without the program name, is
+// for Main rather than for the desktop application: it starts with a
+// subcommand or with an option.
+func IsCLI(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	return slices.Contains(Subcommands, args[0]) || strings.HasPrefix(args[0], "-")
+}
+
 // Main runs the command line and returns the process exit code.
 func Main(args []string, stdout, stderr io.Writer, getenv func(string) string) int {
 	return run(args, stdout, stderr, getenv, systemDeps(getenv))
@@ -109,8 +123,8 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string, d 
 	case "list":
 		return runList(dir, home, d, stdout, stderr)
 	case "":
-		fmt.Fprintln(stderr, "interface graphique : lot B")
-		return 1
+		fmt.Fprintf(stderr, "claude-tower: missing subcommand\n%s\n", usage)
+		return 2
 	}
 	fmt.Fprintf(stderr, "claude-tower: unknown subcommand %q\n%s\n", o.cmd, usage)
 	return 2

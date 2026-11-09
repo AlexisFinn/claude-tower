@@ -199,9 +199,9 @@ func TestList(t *testing.T) {
 	}
 }
 
-func TestNoSubcommandIsPlaceholder(t *testing.T) {
+func TestNoSubcommandIsUsageError(t *testing.T) {
 	code, out, errOut := runArgs(nil, env(nil))
-	if code != 1 || out != "" || !strings.Contains(errOut, "interface graphique") {
+	if code != 2 || out != "" || !strings.Contains(errOut, "missing subcommand") {
 		t.Errorf("code=%d out=%q err=%q", code, out, errOut)
 	}
 }
@@ -437,6 +437,30 @@ func TestSystemLocationsDoNotCreatePrivateDirectory(t *testing.T) {
 	} {
 		if _, err := os.Stat(dir); !os.IsNotExist(err) {
 			t.Errorf("%s created (err=%v)", dir, err)
+		}
+	}
+}
+
+func TestIsCLI(t *testing.T) {
+	cases := []struct {
+		args []string
+		want bool
+	}{
+		{nil, false},
+		{[]string{}, false},
+		{[]string{"run"}, true},
+		{[]string{"exec-env", "x"}, true},
+		{[]string{"bar"}, true},
+		{[]string{"list"}, true},
+		{[]string{"--dir", "/x", "list"}, true},
+		{[]string{"--help"}, true},
+		{[]string{"-h"}, true},
+		{[]string{"unknown"}, false},
+		{[]string{"", "list"}, false},
+	}
+	for _, c := range cases {
+		if got := IsCLI(c.args); got != c.want {
+			t.Errorf("IsCLI(%q) = %v, want %v", c.args, got, c.want)
 		}
 	}
 }

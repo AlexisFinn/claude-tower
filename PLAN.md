@@ -418,10 +418,17 @@ Cycle de vie :
 
 Prérequis : lot B fait.
 
-#### Grille
+#### Grille : mosaïque (comme un gestionnaire de fenêtres « tiling »)
 
+- Les cartes occupent **toute** la zone au-dessus de la barre de prompt, sans marge perdue ni défilement tant que les cartes restent assez grandes.
 - Ordre `Order` (fixe).
-- Le nombre de colonnes vaut `ceil(sqrt(n))`, borné à 4, puis réduit tant que les cartes font moins de 420 px de large. Au-delà, on fait défiler verticalement.
+- Disposition par défaut : division verticale d'abord.
+  - `cols = ceil(sqrt(n))`, `rows = ceil(n / cols)`.
+  - Chaque ligne fait `1/rows` de la hauteur.
+  - Chaque carte d'une ligne pleine fait `1/cols` de la largeur. La dernière ligne, si elle est incomplète, répartit sa largeur entre ses cartes.
+  - Exemples : 1 session prend tout l'écran ; 2 sessions sont côte à côte (50 % de la largeur, 100 % de la hauteur) ; 3 sessions donnent deux cartes en haut et une pleine largeur en bas ; 4 donnent 2×2 ; 6 donnent 3×2.
+- La disposition est calculée par une fonction pure `layout(n, width, height) → rectangles`, testée, pour pouvoir l'ajuster facilement après les essais réels.
+- Garde-fou : en dessous de 320×180 px par carte, on passe au défilement vertical avec des lignes de 180 px.
 - La sélection suit le PID. Si la session sélectionnée disparaît, on prend la voisine à la même position.
 
 #### Carte
@@ -479,6 +486,7 @@ Prérequis : lot B fait.
 #### Tests
 
 La logique est dans des modules TypeScript purs, testés avec vitest :
+- `layout` (1, 2, 3, 4, 5, 6 et 13 sessions ; dernière ligne incomplète ; garde-fou de taille minimale) ;
 - navigation (bords, ligne incomplète, redimensionnement) ;
 - suivi de la sélection, et disparition de la carte sélectionnée ;
 - état de la barre de prompt (désactivée pendant l'envoi, texte gardé en cas d'erreur) ;
