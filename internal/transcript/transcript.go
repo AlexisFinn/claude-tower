@@ -89,6 +89,22 @@ func (f *Finder) Last(sessionID string) Activity {
 	return act
 }
 
+// Path returns the path of the transcript of a session, "" when the session ID
+// is invalid or no transcript exists.
+func (f *Finder) Path(sessionID string) string {
+	if !sessionIDRe.MatchString(sessionID) {
+		return ""
+	}
+	f.mu.Lock()
+	if e := f.cache[sessionID]; e != nil {
+		f.mu.Unlock()
+		return e.path
+	}
+	f.mu.Unlock()
+	path, _ := f.find(sessionID)
+	return path
+}
+
 // Retain drops the cached entries of sessions that are not in sessionIDs.
 func (f *Finder) Retain(sessionIDs []string) {
 	keep := make(map[string]struct{}, len(sessionIDs))

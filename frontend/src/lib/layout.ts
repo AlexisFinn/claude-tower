@@ -16,7 +16,7 @@ export interface Layout {
 /** Smallest card width, in pixels, before the grid scrolls. */
 export const MIN_CARD_WIDTH = 320
 /** Smallest card height, in pixels, before the grid scrolls. */
-export const MIN_CARD_HEIGHT = 180
+export const MIN_CARD_HEIGHT = 230
 
 /**
  * Tiles n cards over a width x height area, splitting vertically first: rows
@@ -57,4 +57,14 @@ function tile(n: number, cols: number, width: number, height: number): Rect[] {
     }
   }
   return rects
+}
+
+/** Returns the rect shrunk by the given amount on every side, never below zero size. */
+export function insetRect(rect: Rect, by: number): Rect {
+  return {
+    x: rect.x + by,
+    y: rect.y + by,
+    width: Math.max(0, rect.width - 2 * by),
+    height: Math.max(0, rect.height - 2 * by),
+  }
 }

@@ -62,6 +62,7 @@ func (c *Core) refresh(ctx context.Context) (snapshot, error) {
 		ids = append(ids, s.SessionID)
 	}
 	c.finder.Retain(ids)
+	c.retainTrackers(ids)
 	c.mu.Lock()
 	c.snap = snap
 	c.mu.Unlock()

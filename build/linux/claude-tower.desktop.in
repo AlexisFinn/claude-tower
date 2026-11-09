@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Claude Tower
+GenericName=Sessions Claude Code
+Comment=Suivre et piloter les sessions Claude Code de la machine
+Exec="@PREFIX@/bin/claude-tower"
+Icon=@PREFIX@/share/pixmaps/claude-tower.png
+Terminal=false
+Categories=Development;
+StartupWMClass=claude-tower

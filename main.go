@@ -16,11 +16,16 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/linux"
+	"github.com/wailsapp/wails/v2/pkg/options/mac"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 //go:embed all:frontend/dist
 var assets embed.FS
+
+//go:embed build/appicon.png
+var icon []byte
 
 func main() {
 	if cli.IsCLI(os.Args[1:]) {
@@ -80,10 +85,15 @@ func runApp() error {
 	w := newWindow()
 	a := app.New(w, w, os.Environ())
 	return wails.Run(&options.App{
-		Title:       "claude-tower",
-		Width:       1400,
-		Height:      900,
-		AssetServer: &assetserver.Options{Assets: assets},
+		Title:            "Claude Tower",
+		Width:            1400,
+		Height:           900,
+		MinWidth:         900,
+		MinHeight:        560,
+		BackgroundColour: &options.RGBA{R: 11, G: 14, B: 19, A: 255},
+		AssetServer:      &assetserver.Options{Assets: assets},
+		Linux:            &linux.Options{Icon: icon, ProgramName: "claude-tower"},
+		Mac:              &mac.Options{About: &mac.AboutInfo{Title: "Claude Tower", Icon: icon}},
 		OnStartup: func(ctx context.Context) {
 			w.setContext(ctx)
 			app.Startup(a)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { layout, type Rect } from './layout'
+import { insetRect, layout, type Rect } from './layout'
 
 const W = 1600
 const H = 900
@@ -79,12 +79,12 @@ describe('layout', () => {
     expect(rects[12]).toEqual({ x: 0, y: 1050, width: 2000, height: 350 })
   })
 
-  it('scrolls with 180 px rows when cards would be too small', () => {
+  it('scrolls with 230 px rows when cards would be too small', () => {
     const result = layout(13, 1000, 600)
     expect(result.scrolls).toBe(true)
-    expect(result.rects.every((r) => r.height === 180)).toBe(true)
+    expect(result.rects.every((r) => r.height === 230)).toBe(true)
     expect(result.rects.every((r) => r.width >= 320 || r.width === 1000)).toBe(true)
-    expect(result.contentHeight).toBe(result.rects[12].y + 180)
+    expect(result.contentHeight).toBe(result.rects[12].y + 230)
   })
 
   it('uses fewer columns when the width is too small for the natural ones', () => {
@@ -106,8 +106,8 @@ describe('layout', () => {
       [667, 666],
       [1333, 667],
     ])
-    expect(result.rects.every((r) => r.height === 180)).toBe(true)
-    expect(result.contentHeight).toBe(540)
+    expect(result.rects.every((r) => r.height === 230)).toBe(true)
+    expect(result.contentHeight).toBe(690)
     expect(result.scrolls).toBe(true)
   })
 
@@ -123,33 +123,33 @@ describe('layout', () => {
     expect(result.scrolls).toBe(false)
   })
 
-  it('does not scroll at exactly 320x180 per card', () => {
-    const result = layout(2, 640, 180)
+  it('does not scroll at exactly 320x230 per card', () => {
+    const result = layout(2, 640, 230)
     expect(result.rects).toEqual([
-      { x: 0, y: 0, width: 320, height: 180 },
-      { x: 320, y: 0, width: 320, height: 180 },
+      { x: 0, y: 0, width: 320, height: 230 },
+      { x: 320, y: 0, width: 320, height: 230 },
     ])
-    expect(result.contentHeight).toBe(180)
+    expect(result.contentHeight).toBe(230)
     expect(result.scrolls).toBe(false)
   })
 
   it('drops a column one pixel under 320 per card', () => {
-    const result = layout(2, 639, 180)
+    const result = layout(2, 639, 230)
     expect(result.rects.map((r) => [r.y, r.width, r.height])).toEqual([
-      [0, 639, 180],
-      [180, 639, 180],
+      [0, 639, 230],
+      [230, 639, 230],
     ])
-    expect(result.contentHeight).toBe(360)
+    expect(result.contentHeight).toBe(460)
     expect(result.scrolls).toBe(true)
   })
 
-  it('scrolls one pixel under 180 per card', () => {
-    const result = layout(2, 640, 179)
+  it('scrolls one pixel under 230 per card', () => {
+    const result = layout(2, 640, 229)
     expect(result.rects.map((r) => [r.width, r.height])).toEqual([
-      [320, 180],
-      [320, 180],
+      [320, 230],
+      [320, 230],
     ])
-    expect(result.contentHeight).toBe(180)
+    expect(result.contentHeight).toBe(230)
     expect(result.scrolls).toBe(true)
   })
 
@@ -163,5 +163,20 @@ describe('layout', () => {
     const result = layout(3, 200, 400)
     expect(result.rects.map((r) => r.width)).toEqual([200, 200, 200])
     expect(result.scrolls).toBe(true)
+  })
+})
+
+describe('insetRect', () => {
+  it('shrinks the rect on every side', () => {
+    expect(insetRect({ x: 10, y: 20, width: 100, height: 60 }, 5)).toEqual({
+      x: 15,
+      y: 25,
+      width: 90,
+      height: 50,
+    })
+  })
+
+  it('never returns a negative size', () => {
+    expect(insetRect({ x: 0, y: 0, width: 6, height: 4 }, 5)).toEqual({ x: 5, y: 5, width: 0, height: 0 })
   })
 })

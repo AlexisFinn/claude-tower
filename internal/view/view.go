@@ -30,7 +30,8 @@ const (
 const maxNameWidth = 16
 
 // DisplayOf maps a session to its presentation category. A session that is
-// busy but whose last turn has ended is only running background work.
+// busy but whose last turn has ended is only running background work; an idle
+// session that has background work is too.
 func DisplayOf(s registry.Session) Display {
 	switch s.State {
 	case registry.StateBusy:
@@ -41,6 +42,9 @@ func DisplayOf(s registry.Session) Display {
 	case registry.StateWaiting:
 		return DisplayWaiting
 	case registry.StateIdle:
+		if s.HasBackground {
+			return DisplayBackground
+		}
 		return DisplayIdle
 	}
 	return DisplayUnknown

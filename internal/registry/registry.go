@@ -33,18 +33,19 @@ const maxWaitingForRunes = 32
 
 // Session is one live Claude Code session.
 type Session struct {
-	PID         int
-	SessionID   string
-	Name        string // raw registry "name", may be empty
-	Cwd         string
-	Kind        string
-	State       State
-	RawStatus   string    // "busy", "shell", "idle", "waiting", or anything else
-	WaitingFor  string    // registry "waitingFor", "" when absent
-	StartedAt   time.Time // zero if absent
-	StatusSince time.Time // statusUpdatedAt, else updatedAt, else zero
-	TmuxPane    string    // "%N" extracted from "tmux", "" if absent or malformed
-	TurnEnded   bool      // never set by registry; filled by callers from transcript.Activity
+	PID           int
+	SessionID     string
+	Name          string // raw registry "name", may be empty
+	Cwd           string
+	Kind          string
+	State         State
+	RawStatus     string    // "busy", "shell", "idle", "waiting", or anything else
+	WaitingFor    string    // registry "waitingFor", "" when absent
+	StartedAt     time.Time // zero if absent
+	StatusSince   time.Time // statusUpdatedAt, else updatedAt, else zero
+	TmuxPane      string    // "%N" extracted from "tmux", "" if absent or malformed
+	TurnEnded     bool      // never set by registry; filled by callers from transcript.Activity
+	HasBackground bool      // never set by registry; filled by callers when background agents or shells are running
 }
 
 // Reader reads the session registry of one config directory.

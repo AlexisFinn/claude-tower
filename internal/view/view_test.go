@@ -77,6 +77,9 @@ func TestDisplayOf(t *testing.T) {
 		{registry.Session{State: registry.StateBusy}, DisplayBusy},
 		{registry.Session{State: registry.StateBusy, TurnEnded: true}, DisplayBackground},
 		{registry.Session{State: registry.StateIdle, TurnEnded: true}, DisplayIdle},
+		{registry.Session{State: registry.StateIdle, HasBackground: true}, DisplayBackground},
+		{registry.Session{State: registry.StateWaiting, HasBackground: true}, DisplayWaiting},
+		{registry.Session{State: registry.StateBusy, HasBackground: true}, DisplayBusy},
 		{registry.Session{State: registry.StateWaiting}, DisplayWaiting},
 		{registry.Session{}, DisplayUnknown},
 	}
@@ -104,6 +107,7 @@ func TestIconAndLabel(t *testing.T) {
 		{registry.Session{State: registry.StateWaiting, WaitingFor: "dialog open"}, "attend (dialog open)"},
 		{registry.Session{State: registry.StateBusy, TurnEnded: true}, "fini · fond"},
 		{registry.Session{State: registry.StateIdle}, "fini"},
+		{registry.Session{State: registry.StateIdle, HasBackground: true}, "fini · fond"},
 		{registry.Session{RawStatus: "odd"}, "odd"},
 		{registry.Session{}, "?"},
 	}

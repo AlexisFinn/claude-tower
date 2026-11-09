@@ -29,6 +29,6 @@
   .loading {
     margin: 0;
     padding: 24px;
-    color: var(--muted);
+    color: var(--text-2);
   }
 </style>

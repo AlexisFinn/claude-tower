@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"claude-tower/internal/background"
 	"claude-tower/internal/focus"
 	"claude-tower/internal/hosting"
 	"claude-tower/internal/locate"
@@ -41,6 +42,10 @@ type Options struct {
 	Run tmux.Runner
 	// ReadTree reads the process tree. Default: locate.ReadTree.
 	ReadTree func(context.Context, tmux.Runner) (locate.Tree, error)
+	// ReadFDs lists the targets of the open file descriptors of a process, to
+	// find the background shells still running. Default:
+	// background.DefaultFDReader, nil on systems without /proc.
+	ReadFDs background.FDReader
 	// Raise brings the window owning one of the processes to the foreground.
 	// Default: focus.Raise.
 	Raise func(pids []int) error
@@ -57,6 +62,9 @@ type Core struct {
 
 	mu   sync.Mutex
 	snap snapshot
+
+	bgMu     sync.Mutex
+	trackers map[string]*background.Tracker // keyed by session ID
 }
 
 // New checks that tmux is installed and recent enough, and returns a Core.
@@ -79,6 +87,9 @@ func New(opts Options) (*Core, error) {
 	if opts.ReadTree == nil {
 		opts.ReadTree = locate.ReadTree
 	}
+	if opts.ReadFDs == nil {
+		opts.ReadFDs = background.DefaultFDReader()
+	}
 	if opts.Raise == nil {
 		opts.Raise = focus.Raise
 	}
@@ -97,7 +108,11 @@ func New(opts Options) (*Core, error) {
 	if opts.Registry.Dir == "" {
 		opts.Registry.Dir = defaultRegistryDir(opts.Hosting, opts.Home)
 	}
-	return &Core{opts: opts, finder: transcript.NewFinder(opts.Registry.Dir)}, nil
+	return &Core{
+		opts:     opts,
+		finder:   transcript.NewFinder(opts.Registry.Dir),
+		trackers: map[string]*background.Tracker{},
+	}, nil
 }
 
 func defaultUserSocketDir(h *hosting.Hosting) string {

@@ -25,6 +25,7 @@ describe('gridKeyAction', () => {
     expect(gridKeyAction(key('/'))).toEqual({ kind: 'prompt' })
     expect(gridKeyAction(key('n'))).toEqual({ kind: 'new' })
     expect(gridKeyAction(key('x'))).toEqual({ kind: 'kill' })
+    expect(gridKeyAction(key('?', { shiftKey: true }))).toEqual({ kind: 'help' })
   })
 
   it('ignores other keys and shortcuts with modifiers', () => {

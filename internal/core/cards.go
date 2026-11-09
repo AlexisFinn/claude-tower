@@ -22,6 +22,10 @@ type Card struct {
 	Attached     bool // a client of the user shows the session
 	CanPrompt    bool
 	PromptReason string // why CanPrompt is false
+
+	// BackgroundAgents and BackgroundShells count the background work still
+	// running; -1 means unknown, for the shells where they cannot be traced.
+	BackgroundAgents, BackgroundShells int
 }
 
 // Cards runs a full refresh cycle and returns one card per session, in a
@@ -36,6 +40,8 @@ func (c *Core) Cards(ctx context.Context) ([]Card, error) {
 	for i, s := range snap.sessions {
 		act := c.finder.Last(s.SessionID)
 		s.TurnEnded = act.TurnEnded
+		bg := c.backgroundCounts(s, snap.tree, now)
+		s.HasBackground = bg.Agents > 0 || bg.Shells > 0
 		card := Card{
 			PID:      s.PID,
 			Order:    i,
@@ -45,6 +51,9 @@ func (c *Core) Cards(ctx context.Context) ([]Card, error) {
 			Since:    view.Duration(s.StatusSince, now),
 			Cwd:      view.ShortPath(s.Cwd, c.opts.Home),
 			Activity: act.Text,
+
+			BackgroundAgents: bg.Agents,
+			BackgroundShells: bg.Shells,
 		}
 		pane, inTmux := snap.panes[s.PID]
 		card.InTmux = inTmux

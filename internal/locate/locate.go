@@ -105,6 +105,30 @@ func (t Tree) Ancestors(pid int) []int {
 	return chain
 }
 
+// Descendants returns every process below pid, in no particular order. pid
+// itself is excluded.
+func (t Tree) Descendants(pid int) []int {
+	children := make(map[int][]int)
+	for child, parent := range t {
+		children[parent] = append(children[parent], child)
+	}
+	var out []int
+	seen := map[int]bool{pid: true}
+	stack := []int{pid}
+	for len(stack) > 0 {
+		cur := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		for _, c := range children[cur] {
+			if !seen[c] {
+				seen[c] = true
+				out = append(out, c)
+				stack = append(stack, c)
+			}
+		}
+	}
+	return out
+}
+
 // Match attaches each session to the pane whose process is the session
 // process or one of its ancestors. The result is keyed by session PID;
 // sessions outside every pane are absent.

@@ -13,9 +13,11 @@ import (
 	"testing"
 	"time"
 
+	"claude-tower/internal/background"
 	"claude-tower/internal/locate"
 	"claude-tower/internal/registry"
 	"claude-tower/internal/tmux"
+	"claude-tower/internal/transcript"
 )
 
 var testNow = time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
@@ -191,11 +193,64 @@ func TestList(t *testing.T) {
 	if code != 0 || len(lines) != 2 {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
-	if want := "●  demo  travaille  5m  -  hors tmux  ~/demo  Bash: make"; lines[0] != want {
+	if want := "●  demo  travaille  5m  -  hors tmux  ~/demo  -  Bash: make"; lines[0] != want {
 		t.Errorf("got  %q\nwant %q", lines[0], want)
 	}
 	if !strings.HasPrefix(lines[1], "○  zzz  fini  -  %4  tmux  ") {
 		t.Errorf("second line: %q", lines[1])
+	}
+}
+
+func TestListShowsBackgroundWork(t *testing.T) {
+	pid, ppid := os.Getpid(), os.Getppid()
+	dir := fixture(t, map[int]string{
+		pid:  fmt.Sprintf(`{"pid":%d,"sessionId":%q,"name":"quiet","status":"idle"}`, pid, tid),
+		ppid: fmt.Sprintf(`{"pid":%d,"sessionId":"22222222-2222-3333-4444-555555555555","name":"other","status":"idle"}`, ppid),
+	})
+	d := fakeDeps(map[int]string{pid: "tmux", ppid: "tmux"})
+	d.background = func(_ context.Context, _ *transcript.Finder, sessions []registry.Session) map[int]background.Counts {
+		if len(sessions) != 2 {
+			t.Errorf("sessions: %+v", sessions)
+		}
+		return map[int]background.Counts{pid: {Agents: 2, Shells: 1}}
+	}
+	_, out, _ := runArgsDeps([]string{"list", "--dir", dir}, env(nil), d)
+	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	if len(lines) != 2 || !strings.HasPrefix(lines[0], "◐  quiet  fini · fond  ") || !strings.Contains(lines[0], "  2a·1s  ") {
+		t.Errorf("background session: %q", lines)
+	}
+	if !strings.HasPrefix(lines[1], "○  other  fini  ") {
+		t.Errorf("idle session: %q", lines)
+	}
+}
+
+func TestBackgroundColumn(t *testing.T) {
+	cases := []struct {
+		c    background.Counts
+		want string
+	}{
+		{background.Counts{}, ""},
+		{background.Counts{Agents: 2}, "2a"},
+		{background.Counts{Shells: 1}, "1s"},
+		{background.Counts{Agents: 2, Shells: 1}, "2a·1s"},
+		{background.Counts{Agents: 1, Shells: -1}, "1a·?s"},
+		{background.Counts{Shells: -1}, "?s"},
+	}
+	for _, c := range cases {
+		if got := backgroundColumn(c.c); got != c.want {
+			t.Errorf("%+v: got %q want %q", c.c, got, c.want)
+		}
+	}
+}
+
+func TestSystemBackgroundReadsTranscript(t *testing.T) {
+	dir := t.TempDir()
+	writeTranscript(t, dir, tid,
+		`{"type":"user","timestamp":"2026-11-09T11:00:00Z","toolUseResult":{"status":"async_launched","agentId":"a1"}}`)
+	sessions := []registry.Session{{PID: os.Getpid(), SessionID: tid}, {PID: 1 << 22, SessionID: "22222222-2222-3333-4444-555555555555"}}
+	got := systemBackground(context.Background(), transcript.NewFinder(dir), sessions)
+	if got[os.Getpid()].Agents != 1 || got[1<<22].Agents != 0 {
+		t.Errorf("counts: %+v", got)
 	}
 }
 

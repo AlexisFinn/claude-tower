@@ -13,7 +13,7 @@ export interface KeyLike {
 /** An action triggered from the grid. */
 export type GridAction =
   | { kind: 'move'; dir: Direction }
-  | { kind: 'focus' | 'fullscreen' | 'prompt' | 'new' | 'kill' }
+  | { kind: 'focus' | 'fullscreen' | 'prompt' | 'new' | 'kill' | 'help' }
 
 const MOVES: Record<string, Direction> = {
   ArrowLeft: 'left',
@@ -33,6 +33,7 @@ const SIMPLE: Record<string, GridAction> = {
   '/': { kind: 'prompt' },
   n: { kind: 'new' },
   x: { kind: 'kill' },
+  '?': { kind: 'help' },
 }
 
 /** Returns the grid action of a key press, or null when the key has none. */

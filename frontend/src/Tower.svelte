@@ -2,21 +2,31 @@
   import { onMount } from 'svelte'
   import { Cards, Focus, Kill, NewSession, Screen } from '../wailsjs/go/app/App'
   import type { core } from '../wailsjs/go/models'
+  import AppBar from './AppBar.svelte'
   import Card from './Card.svelte'
+  import Dialog from './Dialog.svelte'
+  import EmptyState from './EmptyState.svelte'
   import Fullscreen from './Fullscreen.svelte'
   import PromptBar from './PromptBar.svelte'
+  import ShortcutsDialog from './ShortcutsDialog.svelte'
+  import Toasts from './Toasts.svelte'
   import type { GridSize } from './lib/bodySize'
   import { errorMessage } from './lib/errors'
-  import { gridKeyAction, type GridAction } from './lib/keys'
-  import { layout } from './lib/layout'
+  import { routeKey, type KeyTarget } from './lib/keyRouting'
+  import type { GridAction } from './lib/keys'
+  import { backgroundOf } from './lib/cardText'
+  import { insetRect, layout } from './lib/layout'
   import { move } from './lib/navigation'
   import { createRefresher } from './lib/refresher'
   import { createFailureTracker } from './lib/screenFailures'
   import { reconcileSelection } from './lib/selection'
+  import { summarizeStates } from './lib/summary'
+  import { createToasts, type Toast, type ToastKind } from './lib/toasts'
 
   let { warning }: { warning: string } = $props()
 
-  const NOTICE_MS = 6000
+  const GRID_PADDING = 7
+  const CARD_GAP = 10
 
   let cards = $state.raw<core.Card[]>([])
   let screens = $state.raw<Record<number, core.Screen>>({})
@@ -24,29 +34,26 @@
   let fullscreen = $state<core.Card | null>(null)
   let confirmKill = $state<core.Card | null>(null)
   let unavailable = $state.raw<Set<number>>(new Set())
-  let notice = $state('')
-  let warningDismissed = $state(false)
+  let helpOpen = $state(false)
+  let loaded = $state(false)
+  let toasts = $state.raw<Toast[]>([])
   let areaWidth = $state(0)
   let areaHeight = $state(0)
   let promptBar: PromptBar
-  let cancelButton: HTMLButtonElement | undefined = $state()
-  let noticeTimer: ReturnType<typeof setTimeout> | undefined
 
   const sizes = new Map<number, GridSize>()
   const visible = new Set<number>()
   const failures = createFailureTracker()
+  const notifier = createToasts((list) => (toasts = list))
 
-  const placed = $derived(layout(cards.length, areaWidth, areaHeight))
+  const gridWidth = $derived(Math.max(0, areaWidth - 2 * GRID_PADDING))
+  const gridHeight = $derived(Math.max(0, areaHeight - 2 * GRID_PADDING))
+  const placed = $derived(layout(cards.length, gridWidth, gridHeight))
+  const summary = $derived(summarizeStates(cards))
   const selectedCard = $derived(cards.find((c) => c.PID === selected) ?? null)
 
-  $effect(() => {
-    cancelButton?.focus()
-  })
-
-  function showNotice(text: string): void {
-    notice = text
-    clearTimeout(noticeTimer)
-    noticeTimer = setTimeout(() => (notice = ''), NOTICE_MS)
+  function notify(kind: ToastKind, text: string): void {
+    notifier.push(kind, text)
   }
 
   function sameSize(a: GridSize | undefined, b: GridSize): boolean {
@@ -107,9 +114,10 @@
     try {
       list = [...(await Cards())].sort((a, b) => a.Order - b.Order)
     } catch (e) {
-      showNotice(errorMessage(e))
+      notify('error', errorMessage(e))
       return
     }
+    loaded = true
     const oldPids = cards.map((c) => c.PID)
     cards = list
     selected = reconcileSelection(
@@ -126,6 +134,7 @@
   })
 
   onMount(() => {
+    if (warning !== '') notify('warning', warning)
     refresher.start()
     const onVisibility = (): void => {
       if (!document.hidden) refresher.kick()
@@ -134,14 +143,14 @@
     return () => {
       refresher.stop()
       document.removeEventListener('visibilitychange', onVisibility)
-      clearTimeout(noticeTimer)
+      notifier.dispose()
     }
   })
 
   function openFullscreen(card: core.Card | null): void {
     if (!card) return
     if (!card.InTmux) {
-      showNotice('Cette session ne tourne pas dans tmux : lecture seule.')
+      notify('info', 'Cette session ne tourne pas dans tmux : lecture seule.')
       return
     }
     fullscreen = card
@@ -157,10 +166,10 @@
     selected = pid
     try {
       const result = await Focus(pid)
-      if (result.Warning) showNotice(result.Warning)
+      if (result.Warning) notify('warning', result.Warning)
       if (result.Mode === 'embedded') openFullscreen(cards.find((c) => c.PID === pid) ?? null)
     } catch (e) {
-      showNotice(errorMessage(e))
+      notify('error', errorMessage(e))
     }
   }
 
@@ -169,7 +178,7 @@
       await NewSession()
       refresher.kick()
     } catch (e) {
-      showNotice(errorMessage(e))
+      notify('error', errorMessage(e))
     }
   }
 
@@ -181,17 +190,30 @@
       await Kill(card.PID)
       refresher.kick()
     } catch (e) {
-      showNotice(errorMessage(e))
+      notify('error', errorMessage(e))
     }
   }
 
   function askKill(card: core.Card | null): void {
     if (!card) return
     if (!card.Private) {
-      showNotice("Seules les sessions lancées par l'application peuvent être arrêtées.")
+      notify('info', "Seules les sessions lancées par l'application peuvent être arrêtées.")
       return
     }
     confirmKill = card
+  }
+
+  function openFullscreenOf(pid: number): void {
+    openFullscreen(cards.find((c) => c.PID === pid) ?? null)
+  }
+
+  function askKillOf(pid: number): void {
+    askKill(cards.find((c) => c.PID === pid) ?? null)
+  }
+
+  function locateSelected(): void {
+    if (selected === null) return
+    document.getElementById(`card-${selected}`)?.scrollIntoView({ block: 'nearest' })
   }
 
   function moveSelection(dir: 'left' | 'right' | 'up' | 'down'): void {
@@ -224,84 +246,110 @@
       case 'kill':
         askKill(selectedCard)
         break
+      case 'help':
+        helpOpen = true
+        break
     }
+  }
+
+  function keyTarget(target: EventTarget | null): KeyTarget {
+    if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) return 'text'
+    return target instanceof HTMLButtonElement ? 'button' : 'other'
   }
 
   function onKeydown(e: KeyboardEvent): void {
-    if (fullscreen !== null) return
-    if (confirmKill !== null) {
-      const onButton = e.target instanceof HTMLButtonElement
-      if ((e.key === 'Enter' && !onButton) || e.key === 'y') void killConfirmed()
-      else if (e.key === 'Escape' || e.key === 'n') confirmKill = null
-      else return
-      e.preventDefault()
-      return
-    }
-    const target = e.target
-    if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) return
-    const action = gridKeyAction(e)
-    if (action === null) return
+    const route = routeKey(
+      { fullscreen: fullscreen !== null, confirmKill: confirmKill !== null, help: helpOpen },
+      e,
+      keyTarget(e.target),
+    )
+    if (route === null) return
     e.preventDefault()
-    run(action)
+    if (route.layer === 'confirm') {
+      if (route.action === 'accept') void killConfirmed()
+      else confirmKill = null
+    } else if (route.layer === 'help') {
+      helpOpen = false
+    } else {
+      run(route.action)
+    }
+  }
+
+  function blurButton(): void {
+    const active = document.activeElement
+    if (active instanceof HTMLButtonElement && active.closest('[aria-modal="true"]') === null) active.blur()
+  }
+
+  function releaseMouseFocus(e: MouseEvent): void {
+    if (e.detail === 0) return
+    blurButton()
+    setTimeout(blurButton, 0)
   }
 </script>
 
-<svelte:window onkeydown={onKeydown} />
+<svelte:window onkeydown={onKeydown} onclickcapture={releaseMouseFocus} />
 
 <div class="tower">
-  {#if warning !== '' && !warningDismissed}
-    <div class="banner warning">
-      <span>{warning}</span>
-      <button onclick={() => (warningDismissed = true)}>Fermer</button>
-    </div>
-  {/if}
-  {#if notice !== ''}
-    <div class="banner notice">{notice}</div>
-  {/if}
+  <AppBar {summary} onHelp={() => (helpOpen = true)} onNew={() => void newSession()} />
 
-  <div class="area" bind:clientWidth={areaWidth} bind:clientHeight={areaHeight}>
-    {#if cards.length === 0}
-      <p class="empty">Aucune session. Appuyez sur n pour en lancer une.</p>
-    {/if}
-    <div class="canvas" style:height="{placed.scrolls ? placed.contentHeight : areaHeight}px">
-      {#each cards as card, i (card.PID)}
-        {#if placed.rects[i]}
-          <Card
-            {card}
-            screen={screens[card.PID]}
-            unavailable={unavailable.has(card.PID)}
-            rect={placed.rects[i]}
-            selected={card.PID === selected}
-            onSelect={(pid) => (selected = pid)}
-            onFocus={(pid) => void focusCard(pid)}
-            {onMeasure}
-            {onVisible}
-          />
+  <div class="main">
+    <div class="area" bind:clientWidth={areaWidth} bind:clientHeight={areaHeight}>
+      {#if cards.length === 0}
+        {#if loaded}
+          <EmptyState onNew={() => void newSession()} />
         {/if}
-      {/each}
+      {:else}
+        <div class="canvas" style:height="{placed.scrolls ? placed.contentHeight : gridHeight}px">
+          {#each cards as card, i (card.PID)}
+            {#if placed.rects[i]}
+              <Card
+                {card}
+                background={backgroundOf(card)}
+                screen={screens[card.PID]}
+                unavailable={unavailable.has(card.PID)}
+                rect={insetRect(placed.rects[i], CARD_GAP / 2)}
+                selected={card.PID === selected}
+                onSelect={(pid) => (selected = pid)}
+                onFocus={(pid) => void focusCard(pid)}
+                onFullscreen={openFullscreenOf}
+                onKill={askKillOf}
+                {onMeasure}
+                {onVisible}
+              />
+            {/if}
+          {/each}
+        </div>
+      {/if}
     </div>
+    <Toasts {toasts} onDismiss={(id) => notifier.dismiss(id)} />
   </div>
 
   <PromptBar
     bind:this={promptBar}
     card={selectedCard}
     onSent={() => refresher.kick()}
+    onLocate={locateSelected}
   />
 
   {#if fullscreen !== null}
-    <Fullscreen pid={fullscreen.PID} name={fullscreen.Name} onExit={closeFullscreen} />
+    <Fullscreen card={fullscreen} onExit={closeFullscreen} />
+  {/if}
+
+  {#if helpOpen}
+    <ShortcutsDialog onClose={() => (helpOpen = false)} />
   {/if}
 
   {#if confirmKill !== null}
-    <div class="modal" role="alertdialog" aria-modal="true" aria-label="Arrêter la session">
-      <div class="dialog">
-        <p>Arrêter la session {confirmKill.Name} (PID {confirmKill.PID}) ?</p>
-        <div class="actions">
-          <button bind:this={cancelButton} onclick={() => (confirmKill = null)}>Annuler (Échap)</button>
-          <button class="danger" onclick={() => void killConfirmed()}>Arrêter (Entrée)</button>
-        </div>
+    <Dialog title="Arrêter la session" role="alertdialog" onClose={() => (confirmKill = null)}>
+      <p class="confirm">
+        Arrêter la session <strong>{confirmKill.Name}</strong> (PID {confirmKill.PID}) ? Le processus sera
+        interrompu.
+      </p>
+      <div class="actions">
+        <button class="btn" data-autofocus title="Échap" onclick={() => (confirmKill = null)}>Annuler</button>
+        <button class="btn btn-danger" onclick={() => void killConfirmed()}>Arrêter la session</button>
       </div>
-    </div>
+    </Dialog>
   {/if}
 </div>
 
@@ -312,31 +360,16 @@
     height: 100%;
   }
 
-  .banner {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 6px 12px;
-    color: var(--bg);
-  }
-
-  .warning {
-    background: var(--warn);
-  }
-
-  .notice {
-    background: var(--info);
-  }
-
-  .banner button {
-    margin-left: auto;
-  }
-
-  .area {
+  .main {
     position: relative;
     flex: 1;
     min-height: 0;
+  }
+
+  .area {
+    position: absolute;
+    inset: 0;
+    padding: 7px;
     overflow-x: hidden;
     overflow-y: auto;
   }
@@ -346,44 +379,19 @@
     width: 100%;
   }
 
-  .empty {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin: 0;
-    color: var(--muted);
+  .confirm {
+    margin: 0 0 20px;
+    color: var(--text-2);
+    line-height: 1.5;
   }
 
-  .modal {
-    position: fixed;
-    inset: 0;
-    z-index: 20;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0, 0, 0, 0.6);
-  }
-
-  .dialog {
-    padding: 16px 20px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-  }
-
-  .dialog p {
-    margin: 0 0 16px;
+  .confirm strong {
+    color: var(--text);
   }
 
   .actions {
     display: flex;
     justify-content: flex-end;
     gap: 8px;
-  }
-
-  .danger {
-    color: var(--danger);
   }
 </style>

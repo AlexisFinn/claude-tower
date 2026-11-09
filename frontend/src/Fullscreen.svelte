@@ -5,12 +5,15 @@
   import { Unicode11Addon } from '@xterm/addon-unicode11'
   import { BrowserClipboardProvider, ClipboardAddon } from '@xterm/addon-clipboard'
   import * as App from '../wailsjs/go/app/App'
+  import type { core } from '../wailsjs/go/models'
   import { EventsOn } from '../wailsjs/runtime/runtime'
+  import Icon from './Icon.svelte'
+  import StatePill from './StatePill.svelte'
   import { errorMessage } from './lib/errors'
   import { terminalKeyAction } from './lib/keys'
   import { createInputGate, openTerminalSession, type TerminalSession } from './lib/terminalSession'
 
-  let { pid, name, onExit }: { pid: number; name: string; onExit: () => void } = $props()
+  let { card, onExit }: { card: core.Card; onExit: () => void } = $props()
 
   let host: HTMLDivElement
   let error = $state('')
@@ -38,7 +41,7 @@
       fontFamily: 'ui-monospace, "SFMono-Regular", Menlo, "DejaVu Sans Mono", monospace',
       cursorBlink: true,
       allowProposedApi: true,
-      theme: { background: '#0d1117', foreground: '#e6edf3' },
+      theme: { background: '#07090c', foreground: '#e7ecf3' },
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
@@ -53,7 +56,7 @@
     let disposed = false
     const gate = createInputGate()
 
-    openTerminalSession(bindings, pid, term.cols, term.rows, {
+    openTerminalSession(bindings, card.PID, term.cols, term.rows, {
       onData: (bytes) => {
         if (!disposed) term.write(bytes)
       },
@@ -130,11 +133,19 @@
 
 <div class="fullscreen">
   <header>
-    <span class="name">{name}</span>
+    <button class="btn back" title="Retour à la grille" onclick={onExit}>
+      <Icon name="arrowLeft" />
+      Retour à la grille
+      <span class="keys"><kbd>Ctrl</kbd><kbd>Maj</kbd><kbd>Q</kbd></span>
+    </button>
+    <span class="name">{card.Name}</span>
+    <StatePill state={card.State} label={card.Label} />
+    <span class="cwd"><Icon name="folder" size={14} /><span class="path">{card.Cwd}</span></span>
     {#if error !== ''}<span class="error">{error}</span>{/if}
-    <button onclick={onExit}>Retour à la grille (Ctrl+Maj+Q)</button>
   </header>
-  <div class="host" bind:this={host}></div>
+  <div class="stage">
+    <div class="host" bind:this={host}></div>
+  </div>
 </div>
 
 <style>
@@ -144,7 +155,8 @@
     z-index: 10;
     display: flex;
     flex-direction: column;
-    background: var(--bg);
+    background: var(--screen);
+    animation: enter 150ms var(--ease);
   }
 
   header {
@@ -152,25 +164,64 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 6px 12px;
-    background: var(--panel);
+    height: 48px;
+    padding: 0 16px 0 12px;
+    background: var(--surface-2);
     border-bottom: 1px solid var(--border);
   }
 
+  .back {
+    gap: 8px;
+  }
+
+  .keys {
+    display: inline-flex;
+    gap: 3px;
+  }
+
   .name {
-    font-weight: bold;
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .cwd {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    color: var(--text-2);
+  }
+
+  .path {
+    overflow: hidden;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .error {
+    margin-left: auto;
     color: var(--danger);
   }
 
-  button {
-    margin-left: auto;
+  .stage {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+    padding: 8px;
   }
 
   .host {
     flex: 1;
+    min-width: 0;
     min-height: 0;
+  }
+
+  @keyframes enter {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
   }
 </style>

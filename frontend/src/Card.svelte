@@ -10,7 +10,11 @@
   import { Terminal } from '@xterm/xterm'
   import { Unicode11Addon } from '@xterm/addon-unicode11'
   import type { core } from '../wailsjs/go/models'
+  import Icon from './Icon.svelte'
+  import StatePill from './StatePill.svelte'
+  import { parseActivity } from './lib/activity'
   import { fitBody, MAX_FONT, type GridSize } from './lib/bodySize'
+  import { backgroundLabel, type BackgroundTasks } from './lib/cardText'
   import { frameClass } from './lib/frame'
   import type { Rect } from './lib/layout'
   import { screenSequence } from './lib/screenSequence'
@@ -21,8 +25,11 @@
     unavailable: boolean
     rect: Rect
     selected: boolean
+    background?: BackgroundTasks
     onSelect: (pid: number) => void
     onFocus: (pid: number) => void
+    onFullscreen: (pid: number) => void
+    onKill: (pid: number) => void
     onMeasure: (pid: number, size: GridSize | null) => void
     onVisible: (pid: number, visible: boolean) => void
   }
@@ -33,8 +40,11 @@
     unavailable,
     rect,
     selected,
+    background,
     onSelect,
     onFocus,
+    onFullscreen,
+    onKill,
     onMeasure,
     onVisible,
   }: Props = $props()
@@ -52,6 +62,11 @@
   let cell = $state.raw<CellSize | null>(measuredCell)
   let lastKey = ''
 
+  const activity = $derived(parseActivity(card.Activity))
+  const activityIcon = $derived(
+    activity.kind === 'tool' ? 'zap' : activity.kind === 'prompt' ? 'arrowRight' : 'message',
+  )
+  const backgroundText = $derived(backgroundLabel(background))
   const paneCols = $derived(screen && screen.Width > 0 ? screen.Width : null)
   const fit = $derived(
     term !== null && cell !== null && bodyWidth > 0 && bodyHeight > 0
@@ -79,7 +94,7 @@
       lineHeight: 1,
       cursorInactiveStyle: 'none',
       allowProposedApi: true,
-      theme: { background: '#0d1117', foreground: '#e6edf3' },
+      theme: { background: '#07090c', foreground: '#e7ecf3' },
     })
     t.loadAddon(new Unicode11Addon())
     t.unicode.activeVersion = '11'
@@ -127,119 +142,257 @@
   $effect(() => {
     if (selected) root.scrollIntoView({ block: 'nearest' })
   })
+
+  function act(e: MouseEvent, action: (pid: number) => void): void {
+    e.stopPropagation()
+    onSelect(card.PID)
+    action(card.PID)
+  }
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events -- the grid keys are handled on the window -->
+<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -- the grid keys are handled on the window -->
 <div
   bind:this={root}
+  id="card-{card.PID}"
   class="card {frameClass(card.State, selected)}"
   style:left="{rect.x}px"
   style:top="{rect.y}px"
   style:width="{rect.width}px"
   style:height="{rect.height}px"
-  role="button"
+  role="group"
+  aria-label="{card.Name}, {card.Label}"
   tabindex="-1"
   onclick={() => onSelect(card.PID)}
   ondblclick={() => onFocus(card.PID)}
 >
   <header>
-    <span class="name">{card.Name}</span>
-    <span class="label">{card.Label}</span>
-    <span class="since">{card.Since}</span>
-    <span class="cwd">{card.Cwd}</span>
-  </header>
-  {#if card.InTmux}
-    <div class="activity">{card.Activity}</div>
-    <div class="body" bind:clientWidth={bodyWidth} bind:clientHeight={bodyHeight}>
-      <div class="term" bind:this={host}></div>
-      {#if unavailable}<span class="stale">écran indisponible</span>{/if}
+    <div class="line">
+      <span class="name" title={card.Name}>{card.Name}</span>
+      <StatePill state={card.State} label={card.Label} />
+      <div class="trail">
+        <span class="since">{card.Since}</span>
+        <!-- svelte-ignore a11y_no_static_element_interactions -- stops the double click from reaching the card -->
+        <div class="tools" ondblclick={(e) => e.stopPropagation()}>
+          {#if card.InTmux}
+            <button class="icon-btn" aria-label="Plein écran" title="Plein écran (o)" onclick={(e) => act(e, onFullscreen)}>
+              <Icon name="maximize" />
+            </button>
+          {/if}
+          <button class="icon-btn" aria-label="Aller au terminal" title="Aller au terminal (Entrée)" onclick={(e) => act(e, onFocus)}>
+            <Icon name="terminal" />
+          </button>
+          {#if card.Private}
+            <button class="icon-btn" aria-label="Arrêter la session" title="Arrêter la session (x)" onclick={(e) => act(e, onKill)}>
+              <Icon name="stop" />
+            </button>
+          {/if}
+        </div>
+      </div>
     </div>
+    <div class="line meta">
+      <span class="cwd"><Icon name="folder" size={14} /><span class="path" title={card.Cwd}>{card.Cwd}</span></span>
+      {#if card.Private}<span class="tag">privée</span>{/if}
+      <span class="tag">{card.InTmux ? 'tmux' : 'hors tmux'}</span>
+      {#if backgroundText !== ''}<span class="tag">{backgroundText}</span>{/if}
+    </div>
+  </header>
+
+  {#if card.InTmux}
+    <div class="screen">
+      <div class="fill" bind:clientWidth={bodyWidth} bind:clientHeight={bodyHeight}>
+        <div class="term" bind:this={host}></div>
+      </div>
+      {#if unavailable}
+        <div class="stale" role="status">
+          <Icon name="monitorOff" size={18} />
+          <span>Écran indisponible</span>
+        </div>
+      {/if}
+    </div>
+    <footer title={card.Activity}>
+      <span class="kind {activity.kind}"><Icon name={activityIcon} size={14} /></span>
+      <span class="last" class:none={activity.kind === 'none'}>
+        {activity.kind === 'none' ? 'Aucune activité' : activity.text}
+      </span>
+    </footer>
   {:else}
-    <div class="body plain">
-      <pre>{card.Activity}</pre>
-      <p>hors tmux : lecture seule</p>
+    <div class="screen plain">
+      <p class="activity-text">{card.Activity === '' ? 'Aucune activité' : card.Activity}</p>
+      <p class="readonly"><Icon name="lock" size={14} />Lecture seule : session hors tmux</p>
     </div>
   {/if}
 </div>
 
 <style>
   .card {
-    --state: var(--unknown);
     position: absolute;
-    box-sizing: border-box;
     display: flex;
     flex-direction: column;
+    gap: 8px;
+    padding: 10px;
     overflow: hidden;
-    background: var(--bg);
-    outline: 1px solid var(--state);
-    outline-offset: -1px;
+    background: var(--surface);
+    border: 1px solid color-mix(in srgb, var(--state) 45%, transparent);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow), 0 0 0 0 transparent, 0 0 0 0 transparent;
     cursor: default;
+    transition:
+      box-shadow 150ms var(--ease),
+      border-color 150ms var(--ease);
+  }
+
+  .card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--state);
+    pointer-events: none;
   }
 
   .card.selected {
-    outline-width: 3px;
-    outline-offset: -3px;
+    box-shadow:
+      var(--shadow),
+      0 0 0 2px var(--state),
+      0 0 0 6px var(--state-soft);
   }
 
-  .frame-unknown {
-    outline-style: dashed;
+  .card.frame-unknown {
+    border-style: dashed;
   }
 
-  .frame-waiting {
-    --state: var(--waiting);
+  .card.frame-unknown::before {
+    opacity: 0.5;
   }
-  .frame-busy {
-    --state: var(--busy);
+
+  .card:focus-visible {
+    outline: none;
   }
-  .frame-background {
-    --state: var(--background);
+
+  .card.frame-waiting {
+    animation: halo 2.4s ease-in-out infinite;
   }
-  .frame-idle {
-    --state: var(--idle);
+
+  .card.frame-waiting.selected {
+    animation-name: halo-selected;
   }
 
   header {
     flex: none;
     display: flex;
-    gap: 10px;
-    padding: 6px 8px 0;
-    white-space: nowrap;
-    overflow: hidden;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+  }
+
+  .line {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    min-height: 28px;
   }
 
   .name {
-    font-weight: bold;
-  }
-
-  .label {
-    color: var(--state);
-  }
-
-  .since,
-  .cwd {
-    color: var(--muted);
-  }
-
-  .cwd {
-    margin-left: auto;
+    flex: 1;
+    min-width: 0;
     overflow: hidden;
+    font-size: 14px;
+    font-weight: 600;
     text-overflow: ellipsis;
-  }
-
-  .activity {
-    flex: none;
-    padding: 0 8px 4px;
-    color: var(--muted);
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
-  .body {
+  .trail {
+    flex: none;
+    display: flex;
+    align-items: center;
+  }
+
+  .since {
+    font-size: 11.5px;
+    color: var(--text-3);
+    white-space: nowrap;
+    transition: opacity 120ms var(--ease);
+  }
+
+  .tools {
+    position: absolute;
+    top: 50%;
+    right: 0;
+    z-index: 1;
+    display: flex;
+    gap: 2px;
+    padding-left: 10px;
+    background: var(--surface);
+    box-shadow: -8px 0 8px var(--surface);
+    transform: translateY(-50%);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms var(--ease);
+  }
+
+  .card:hover .since,
+  .card:has(.tools :focus-visible) .since {
+    opacity: 0;
+  }
+
+  .card:hover .tools,
+  .card:has(.tools :focus-visible) .tools {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .meta {
+    min-height: 0;
+    gap: 6px;
+    overflow: hidden;
+  }
+
+  .cwd {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 1 auto;
+    gap: 5px;
+    min-width: 0;
+    color: var(--text-2);
+  }
+
+  .path {
+    overflow: hidden;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tag {
+    flex: none;
+    padding: 0 7px;
+    font-size: 11px;
+    line-height: 17px;
+    color: var(--text-3);
+    white-space: nowrap;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+  }
+
+  .screen {
     position: relative;
     flex: 1;
     min-height: 0;
-    margin: 0 8px 6px;
+    overflow: hidden;
+    background: var(--screen);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  .fill {
+    position: absolute;
+    inset: 4px;
     overflow: hidden;
   }
 
@@ -250,22 +403,96 @@
 
   .stale {
     position: absolute;
-    right: 0;
-    bottom: 0;
-    padding: 0 4px;
-    color: var(--warn);
-    background: var(--panel);
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    color: var(--busy);
+    background: color-mix(in srgb, var(--screen) 78%, transparent);
   }
 
-  .plain pre {
+  .plain {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .activity-text {
     margin: 0;
-    white-space: pre-wrap;
     overflow: hidden;
-    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text);
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
   }
 
-  .plain p {
-    margin: 8px 0 0;
-    color: var(--warn);
+  .readonly {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: auto 0 0;
+    font-size: 12px;
+    color: var(--text-2);
+  }
+
+  footer {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    min-height: 18px;
+  }
+
+  .kind {
+    display: flex;
+    color: var(--text-3);
+  }
+
+  .kind.tool {
+    color: var(--busy);
+  }
+
+  .last {
+    min-width: 0;
+    overflow: hidden;
+    font-size: 12px;
+    color: var(--text-2);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .last.none {
+    color: var(--text-3);
+  }
+
+  @keyframes halo {
+    0%,
+    100% {
+      box-shadow: var(--shadow), 0 0 0 0 transparent, 0 0 0 3px var(--state-soft);
+    }
+    50% {
+      box-shadow:
+        var(--shadow),
+        0 0 0 0 transparent,
+        0 0 0 8px color-mix(in srgb, var(--state) 5%, transparent);
+    }
+  }
+
+  @keyframes halo-selected {
+    0%,
+    100% {
+      box-shadow: var(--shadow), 0 0 0 2px var(--state), 0 0 0 6px var(--state-soft);
+    }
+    50% {
+      box-shadow:
+        var(--shadow),
+        0 0 0 2px var(--state),
+        0 0 0 10px color-mix(in srgb, var(--state) 5%, transparent);
+    }
   }
 </style>

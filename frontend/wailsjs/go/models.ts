@@ -14,6 +14,8 @@ export namespace core {
 	    Attached: boolean;
 	    CanPrompt: boolean;
 	    PromptReason: string;
+	    BackgroundAgents: number;
+	    BackgroundShells: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new Card(source);
@@ -34,6 +36,8 @@ export namespace core {
 	        this.Attached = source["Attached"];
 	        this.CanPrompt = source["CanPrompt"];
 	        this.PromptReason = source["PromptReason"];
+	        this.BackgroundAgents = source["BackgroundAgents"];
+	        this.BackgroundShells = source["BackgroundShells"];
 	    }
 	}
 	export class FocusResult {

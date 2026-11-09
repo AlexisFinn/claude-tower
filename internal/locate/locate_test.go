@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"sort"
 	"testing"
 
 	"claude-tower/internal/registry"
@@ -82,6 +83,28 @@ func TestReadTreeOnThisSystem(t *testing.T) {
 	}
 	if tree[os.Getpid()] != os.Getppid() {
 		t.Errorf("own ppid: got %d want %d", tree[os.Getpid()], os.Getppid())
+	}
+}
+
+func TestDescendants(t *testing.T) {
+	tree := Tree{2: 1, 10: 2, 11: 2, 12: 10, 13: 12, 20: 3, 30: 31, 31: 30}
+	cases := []struct {
+		name string
+		pid  int
+		want []int
+	}{
+		{"subtree without the process itself", 2, []int{10, 11, 12, 13}},
+		{"leaf", 13, nil},
+		{"other branch", 3, []int{20}},
+		{"unknown pid", 999, nil},
+		{"cycle", 30, []int{31}},
+	}
+	for _, c := range cases {
+		got := tree.Descendants(c.pid)
+		sort.Ints(got)
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: got %v want %v", c.name, got, c.want)
+		}
 	}
 }
 

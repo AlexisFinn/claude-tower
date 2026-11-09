@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"claude-tower/internal/background"
 	"claude-tower/internal/hosting"
 	"claude-tower/internal/locate"
 	"claude-tower/internal/registry"
@@ -42,6 +43,9 @@ var now = time.Now
 type deps struct {
 	// locations maps session PIDs to a location column value.
 	locations func(ctx context.Context, sessions []registry.Session) map[int]string
+	// background counts the running background agents and shells of the
+	// sessions, keyed by PID. Nil means no counts.
+	background func(ctx context.Context, finder *transcript.Finder, sessions []registry.Session) map[int]background.Counts
 	// run replaces the process with Claude Code hosted in the private server.
 	run func(args []string) error
 	// exec replaces the process with a command.
@@ -206,15 +210,42 @@ func runList(dir, home string, d deps, stdout, stderr io.Writer) int {
 		sessions[i].TurnEnded = act.TurnEnded
 		activity[s.PID] = act.Text
 	}
-	locations := d.locations(context.Background(), sessions)
+	ctx := context.Background()
+	var counts map[int]background.Counts
+	if d.background != nil {
+		counts = d.background(ctx, finder, sessions)
+	}
+	for i, s := range sessions {
+		c := counts[s.PID]
+		sessions[i].HasBackground = c.Agents > 0 || c.Shells > 0
+	}
+	locations := d.locations(ctx, sessions)
 	t := now()
 	for _, s := range view.SortByUrgency(sessions) {
-		fmt.Fprintln(stdout, listLine(s, locations[s.PID], activity[s.PID], home, t))
+		fmt.Fprintln(stdout, listLine(s, locations[s.PID], backgroundColumn(counts[s.PID]), activity[s.PID], home, t))
 	}
 	return 0
 }
 
-func listLine(s registry.Session, location, activity, home string, t time.Time) string {
+// backgroundColumn formats the background work as "2a·1s" (agents, shells),
+// with "?" for an unknown count, and is empty when there is none.
+func backgroundColumn(c background.Counts) string {
+	var parts []string
+	for _, p := range []struct {
+		n    int
+		unit string
+	}{{c.Agents, "a"}, {c.Shells, "s"}} {
+		switch {
+		case p.n < 0:
+			parts = append(parts, "?"+p.unit)
+		case p.n > 0:
+			parts = append(parts, fmt.Sprint(p.n)+p.unit)
+		}
+	}
+	return strings.Join(parts, "·")
+}
+
+func listLine(s registry.Session, location, bg, activity, home string, t time.Time) string {
 	fields := []string{
 		view.Icon(view.DisplayOf(s)),
 		view.DisplayName(s),
@@ -223,6 +254,7 @@ func listLine(s registry.Session, location, activity, home string, t time.Time) 
 		s.TmuxPane,
 		location,
 		view.ShortPath(s.Cwd, home),
+		bg,
 		activity,
 	}
 	for i, f := range fields {
@@ -239,6 +271,7 @@ func systemDeps(getenv func(string) string) deps {
 		locations: func(ctx context.Context, sessions []registry.Session) map[int]string {
 			return systemLocations(ctx, sessions, getenv)
 		},
+		background: systemBackground,
 		run: func(args []string) error {
 			h, err := hosting.NewSystem(os.Environ())
 			if err != nil {
@@ -249,6 +282,32 @@ func systemDeps(getenv func(string) string) deps {
 		exec:    syscall.Exec,
 		environ: os.Environ,
 	}
+}
+
+// systemBackground counts the background work of every session from its
+// transcript and the process tree. When the tree cannot be read, the shells
+// are unknown.
+func systemBackground(ctx context.Context, finder *transcript.Finder, sessions []registry.Session) map[int]background.Counts {
+	tree, err := locate.ReadTree(ctx, tmux.DefaultRunner)
+	readFDs := background.DefaultFDReader()
+	if err != nil {
+		readFDs = nil
+	}
+	t := now()
+	out := make(map[int]background.Counts, len(sessions))
+	for _, s := range sessions {
+		tr := background.NewTracker()
+		if path := finder.Path(s.SessionID); path != "" {
+			_ = tr.Update(path)
+		}
+		out[s.PID] = tr.Counts(background.Query{
+			StartedAt:   s.StartedAt,
+			Now:         t,
+			Descendants: func() []int { return tree.Descendants(s.PID) },
+			ReadFDs:     readFDs,
+		})
+	}
+	return out
 }
 
 // systemLocations looks for the sessions in the tmux servers of the user and

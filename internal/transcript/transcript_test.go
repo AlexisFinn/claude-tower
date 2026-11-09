@@ -289,3 +289,22 @@ func TestRetain(t *testing.T) {
 		t.Errorf("dropped entry not rescanned: %q", got)
 	}
 }
+
+func TestPath(t *testing.T) {
+	dir := t.TempDir()
+	want := writeTranscript(t, dir, "p", sid, asst(`{"type":"text","text":"a"}`))
+	f := NewFinder(dir)
+	if got := f.Path(sid); got != want {
+		t.Errorf("uncached: got %q want %q", got, want)
+	}
+	f.Last(sid)
+	if got := f.Path(sid); got != want {
+		t.Errorf("cached: got %q want %q", got, want)
+	}
+	if got := f.Path("11111111-2222-3333-4444-555555555555"); got != "" {
+		t.Errorf("unknown session: %q", got)
+	}
+	if got := f.Path("../x"); got != "" {
+		t.Errorf("invalid session ID: %q", got)
+	}
+}
