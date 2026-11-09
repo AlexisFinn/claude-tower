@@ -24,8 +24,9 @@ Il y a un fichier `<configDir>/sessions/<pid>.json` par session vivante. Le fich
 - Les horodatages sont en millisecondes depuis l'epoch.
 - `status` prend les valeurs `busy`, `shell`, `idle` et `waiting` ; c'est l'énumération du registre dans le binaire.
   - `shell` : la session exécute une commande shell.
-  - `waiting` : la session attend l'utilisateur, avec un champ `waitingFor` (valeurs vues dans le binaire : `"dialog open"`, `"input needed"`, `"sandbox request"`, `"worker request"`, `"goal proposal"` ; la liste n'est pas fermée). Une demande d'autorisation correspond à `"dialog open"`.
+  - `waiting` : la session attend l'utilisateur, avec un champ `waitingFor` (valeurs vues dans le binaire : `"dialog open"`, `"input needed"`, `"sandbox request"`, `"worker request"`, `"goal proposal"` ; la liste n'est pas fermée). Une demande d'autorisation donne `"permission prompt"` (observé le 2026-11-09).
 - `kind` : `interactive`, `bg`, `daemon` ou `daemon-worker`. Il peut aussi y avoir un booléen `spare`.
+- `entrypoint` : `cli` pour une session interactive. Un `claude -p` s'inscrit pendant son exécution avec `kind: interactive` et `entrypoint: sdk-cli`, et hérite du volet tmux de son parent : les `entrypoint` qui commencent par `sdk` sont ignorés.
 - `tmux` est au format `<session>:@<window_id>.%<pane_id>`. Il peut manquer si la session tourne hors de tmux. Il ne contient pas la socket du serveur tmux.
 - `procStart` (chaîne de chiffres aujourd'hui) est égal au champ 22 de `/proc/<pid>/stat` (starttime, en ticks). Comparer les deux permet de détecter un fichier orphelin dont le PID a été réutilisé. Le champ `comm` (2) peut contenir des espaces et des parenthèses : découper après la **dernière** `)`. Dans le reste de la ligne découpé par `strings.Fields`, le champ 3 (state) est à l'index 0, donc starttime est à l'**index 19**.
 - Il peut y avoir d'autres champs (`pidDomain`, `peerFeatures`, `logPath`…) : on les ignore.
