@@ -12,6 +12,7 @@ import (
 
 	"claude-tower/internal/registry"
 	"claude-tower/internal/transcript"
+	"claude-tower/internal/tui"
 	"claude-tower/internal/view"
 )
 
@@ -22,6 +23,9 @@ const (
 
 // now is the clock used for durations; tests replace it.
 var now = time.Now
+
+// runTUI starts the terminal interface; tests replace it.
+var runTUI = tui.Run
 
 type opts struct {
 	cmd      string
@@ -71,8 +75,14 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 	case "bar":
 		runBar(dir, o.maxWidth, stdout, stderr)
 		return 0
-	case "", "list":
+	case "list":
 		return runList(dir, home, stdout, stderr)
+	case "":
+		if err := runTUI(dir, home, o.client); err != nil {
+			fmt.Fprintf(stderr, "claude-tower: %v\n", err)
+			return 1
+		}
+		return 0
 	}
 	fmt.Fprintf(stderr, "claude-tower: unknown subcommand %q\n%s\n", o.cmd, usage)
 	return 2

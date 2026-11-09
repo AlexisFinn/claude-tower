@@ -268,3 +268,24 @@ func TestPartialFirstLineIsDropped(t *testing.T) {
 		t.Errorf("partial line retained: %+v", got)
 	}
 }
+
+func TestRetain(t *testing.T) {
+	other := "11111111-2222-3333-4444-555555555555"
+	dir := t.TempDir()
+	writeTranscript(t, dir, "p", sid, asst(`{"type":"text","text":"a"}`))
+	writeTranscript(t, dir, "p", other, asst(`{"type":"text","text":"b"}`))
+	f := NewFinder(dir)
+	f.Last(sid)
+	f.Last(other)
+	f.Retain([]string{other})
+	f.mu.Lock()
+	_, hasSid := f.cache[sid]
+	_, hasOther := f.cache[other]
+	f.mu.Unlock()
+	if hasSid || !hasOther {
+		t.Errorf("hasSid=%v hasOther=%v", hasSid, hasOther)
+	}
+	if got := f.Last(sid).Text; got != "a" {
+		t.Errorf("dropped entry not rescanned: %q", got)
+	}
+}

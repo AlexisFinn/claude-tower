@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -181,12 +182,27 @@ func TestList(t *testing.T) {
 	}
 }
 
-func TestNoSubcommandListsSessions(t *testing.T) {
-	pid := os.Getpid()
-	dir := fixture(t, map[int]string{pid: busySession(pid)})
-	code, out, _ := runArgs([]string{"--dir", dir}, env(nil))
-	if code != 0 || !strings.Contains(out, "demo") {
-		t.Errorf("code=%d out=%q", code, out)
+func TestNoSubcommandStartsTUI(t *testing.T) {
+	old := runTUI
+	defer func() { runTUI = old }()
+	var gotDir, gotHome, gotClient string
+	runTUI = func(dir, home, client string) error {
+		gotDir, gotHome, gotClient = dir, home, client
+		return nil
+	}
+	code, out, _ := runArgs([]string{"--dir", "/x", "--client", "c1"}, env(map[string]string{"HOME": "/h"}))
+	if code != 0 || out != "" || gotDir != "/x" || gotHome != "/h" || gotClient != "c1" {
+		t.Errorf("code=%d out=%q dir=%q home=%q client=%q", code, out, gotDir, gotHome, gotClient)
+	}
+}
+
+func TestTUIErrorExitsOne(t *testing.T) {
+	old := runTUI
+	defer func() { runTUI = old }()
+	runTUI = func(string, string, string) error { return errors.New("no tty") }
+	code, _, errOut := runArgs([]string{"--dir", "/x"}, env(nil))
+	if code != 1 || !strings.Contains(errOut, "no tty") {
+		t.Errorf("code=%d err=%q", code, errOut)
 	}
 }
 

@@ -170,6 +170,9 @@ func TestKindAndSpareFiltering(t *testing.T) {
 		{`{"pid":100,"kind":"bg"}`, true},
 		{`{"pid":100}`, true},
 		{`{"pid":100,"kind":"other"}`, true},
+		{`{"pid":100,"kind":"interactive","entrypoint":"sdk-cli"}`, false},
+		{`{"pid":100,"kind":"interactive","entrypoint":"sdk-ts"}`, false},
+		{`{"pid":100,"kind":"interactive","entrypoint":"cli"}`, true},
 	} {
 		if _, ok := one(t, c.body); ok != c.keep {
 			t.Errorf("%s: kept=%v", c.body, ok)

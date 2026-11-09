@@ -108,6 +108,11 @@ func readSession(read func(string) ([]byte, error), path string, pid int) (s Ses
 	if kind == "daemon" || kind == "daemon-worker" || boolean(rec, "spare") {
 		return Session{}, "", false
 	}
+	// Non-interactive runs (claude -p, SDK) register with kind "interactive"
+	// and an "sdk-*" entrypoint.
+	if strings.HasPrefix(str(rec, "entrypoint"), "sdk") {
+		return Session{}, "", false
+	}
 	raw := clean(str(rec, "status"))
 	s = Session{
 		PID:         pid,

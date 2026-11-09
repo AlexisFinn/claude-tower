@@ -89,6 +89,21 @@ func (f *Finder) Last(sessionID string) Activity {
 	return act
 }
 
+// Retain drops the cached entries of sessions that are not in sessionIDs.
+func (f *Finder) Retain(sessionIDs []string) {
+	keep := make(map[string]struct{}, len(sessionIDs))
+	for _, id := range sessionIDs {
+		keep[id] = struct{}{}
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for id := range f.cache {
+		if _, ok := keep[id]; !ok {
+			delete(f.cache, id)
+		}
+	}
+}
+
 // find searches the project directories one by one rather than using a glob,
 // because the config directory path may contain glob metacharacters.
 func (f *Finder) find(sessionID string) (string, os.FileInfo) {
