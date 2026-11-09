@@ -10,8 +10,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
+	"claude-tower/internal/hosting"
 	"claude-tower/internal/locate"
 	"claude-tower/internal/registry"
 	"claude-tower/internal/tmux"
@@ -20,7 +22,9 @@ import (
 )
 
 const (
-	usage           = "usage: claude-tower [bar|list] [--dir <config dir>] [--max-width <n>] [--client <name>]"
+	usage = "usage: claude-tower [bar|list] [--dir <config dir>] [--max-width <n>] [--client <name>]\n" +
+		"       claude-tower run [claude arguments...]"
+
 	defaultMaxWidth = 100
 
 	// Values of the location column of list.
@@ -37,6 +41,12 @@ var now = time.Now
 type deps struct {
 	// locations maps session PIDs to a location column value.
 	locations func(ctx context.Context, sessions []registry.Session) map[int]string
+	// run replaces the process with Claude Code hosted in the private server.
+	run func(args []string) error
+	// exec replaces the process with a command.
+	exec func(path string, argv, env []string) error
+	// environ returns the environment of the process.
+	environ func() []string
 }
 
 type opts struct {
@@ -77,6 +87,14 @@ func Main(args []string, stdout, stderr io.Writer, getenv func(string) string) i
 }
 
 func run(args []string, stdout, stderr io.Writer, getenv func(string) string, d deps) int {
+	if len(args) > 0 {
+		switch args[0] {
+		case "run":
+			return report(stderr, d.run(args[1:]))
+		case "exec-env":
+			return report(stderr, runExecEnv(args[1:], d))
+		}
+	}
 	o, err := parseArgs(args)
 	if err != nil {
 		fmt.Fprintf(stderr, "claude-tower: %v\n%s\n", err, usage)
@@ -96,6 +114,35 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string, d 
 	}
 	fmt.Fprintf(stderr, "claude-tower: unknown subcommand %q\n%s\n", o.cmd, usage)
 	return 2
+}
+
+func report(stderr io.Writer, err error) int {
+	if err == nil {
+		return 0
+	}
+	fmt.Fprintf(stderr, "claude-tower: %v\n", err)
+	return 1
+}
+
+// runExecEnv implements `exec-env <file> -- <command> [args...]`: it loads the
+// environment file, deletes it, and runs the command with that environment
+// plus the terminal variables of the current process.
+func runExecEnv(args []string, d deps) error {
+	file, command, err := hosting.ExecEnvArgs(args)
+	if err != nil {
+		return err
+	}
+	fileEnv, err := hosting.ReadEnvFile(file)
+	if err != nil {
+		return err
+	}
+	path := command[0]
+	if !strings.Contains(path, "/") {
+		if path, err = exec.LookPath(path); err != nil {
+			return err
+		}
+	}
+	return d.exec(path, command, hosting.ExecEnv(fileEnv, d.environ()))
 }
 
 func homeDir(getenv func(string) string) string {
@@ -172,17 +219,39 @@ func listLine(s registry.Session, location, activity, home string, t time.Time) 
 	return strings.Join(fields, "  ")
 }
 
-// systemDeps wires the subcommands to the real tmux servers of the user.
+// systemDeps wires the subcommands to the real system.
 func systemDeps(getenv func(string) string) deps {
-	return deps{locations: func(ctx context.Context, sessions []registry.Session) map[int]string {
-		bin, err := tmux.FindBinary(exec.LookPath)
-		if err != nil {
-			return unknownLocations(sessions)
-		}
-		sockets := tmux.SocketDir(getenv("TMUX_TMPDIR"), os.Getuid())
-		servers := tmux.Servers(sockets, bin, tmux.DefaultRunner)
-		return tmuxLocations(ctx, sessions, servers, "", locate.ReadTree, tmux.DefaultRunner)
-	}}
+	return deps{
+		locations: func(ctx context.Context, sessions []registry.Session) map[int]string {
+			return systemLocations(ctx, sessions, getenv)
+		},
+		run: func(args []string) error {
+			h, err := hosting.NewSystem(os.Environ())
+			if err != nil {
+				return err
+			}
+			return h.Run(args)
+		},
+		exec:    syscall.Exec,
+		environ: os.Environ,
+	}
+}
+
+// systemLocations looks for the sessions in the tmux servers of the user and
+// in the private server.
+func systemLocations(ctx context.Context, sessions []registry.Session, getenv func(string) string) map[int]string {
+	bin, err := tmux.FindBinary(exec.LookPath)
+	if err != nil {
+		return unknownLocations(sessions)
+	}
+	userDir := tmux.SocketDir(getenv("TMUX_TMPDIR"), os.Getuid())
+	var private string
+	if h, err := hosting.NewSystem(os.Environ()); err == nil {
+		userDir = h.UserSocketDir(os.Getuid())
+		private, _ = h.PrivateSocketPath()
+	}
+	servers := tmux.CandidateServers(userDir, private, bin, tmux.DefaultRunner)
+	return tmuxLocations(ctx, sessions, servers, private, locate.ReadTree, tmux.DefaultRunner)
 }
 
 func unknownLocations(sessions []registry.Session) map[int]string {

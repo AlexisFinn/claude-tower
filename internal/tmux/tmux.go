@@ -28,7 +28,9 @@ type Runner func(ctx context.Context, stdin io.Reader, name string, args ...stri
 
 // ExecRunner returns a Runner that runs commands without a shell and kills
 // them after timeout. A child left running by the command cannot hold the
-// call longer than a short grace period after the kill.
+// call longer than a short grace period after the kill. When a command exits
+// successfully but leaves a child holding its output, the error wraps
+// exec.ErrWaitDelay and the output read so far is still returned.
 func ExecRunner(timeout time.Duration) Runner {
 	return func(ctx context.Context, stdin io.Reader, name string, args ...string) ([]byte, error) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -39,6 +41,9 @@ func ExecRunner(timeout time.Duration) Runner {
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
 		cmd.WaitDelay = 100 * time.Millisecond
 		if err := cmd.Run(); err != nil {
+			if errors.Is(err, exec.ErrWaitDelay) && ctx.Err() == nil {
+				return stdout.Bytes(), fmt.Errorf("%s: %w", name, err)
+			}
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				return nil, fmt.Errorf("%s: délai de %s dépassé: %w", name, timeout, err)
 			}
@@ -140,4 +145,15 @@ func Servers(dir string, bin string, run Runner) []Server {
 		}
 	}
 	return out
+}
+
+// CandidateServers returns the servers found in the user's socket directory
+// and, when privateSocket is not empty, in the directory of the private
+// server's socket.
+func CandidateServers(userDir, privateSocket, bin string, run Runner) []Server {
+	servers := Servers(userDir, bin, run)
+	if privateSocket != "" {
+		servers = append(servers, Servers(filepath.Dir(privateSocket), bin, run)...)
+	}
+	return servers
 }

@@ -114,14 +114,30 @@ func (p Pane) Attached(all []Client) bool {
 	return len(p.Clients(all)) > 0
 }
 
-// Capture returns the visible screen of the pane with its escape sequences.
-// Lines are separated by "\n" and the text ends with one.
-func (s Server) Capture(ctx context.Context, pane string) (string, error) {
-	out, err := s.Exec(ctx, nil, "capture-pane", "-p", "-e", "-t", pane)
+// Capture returns the visible screen of the pane with its escape sequences,
+// and the size of the pane at the time of the capture. Lines are separated by
+// "\n" and the text ends with one.
+func (s Server) Capture(ctx context.Context, pane string) (text string, width, height int, err error) {
+	out, err := s.Exec(ctx, nil, "capture-pane", "-p", "-e", "-t", pane,
+		";", "display-message", "-p", "-t", pane, "#{pane_width}\t#{pane_height}")
 	if err != nil {
-		return "", err
+		return "", 0, 0, err
 	}
-	return string(out), nil
+	return parseCapture(string(out))
+}
+
+// parseCapture splits the output of Capture: the size line is the last line,
+// after the captured lines.
+func parseCapture(out string) (text string, width, height int, err error) {
+	body := strings.TrimSuffix(out, "\n")
+	i := strings.LastIndexByte(body, '\n')
+	w, h, ok := strings.Cut(body[i+1:], "\t")
+	width, err1 := strconv.Atoi(w)
+	height, err2 := strconv.Atoi(h)
+	if !ok || err1 != nil || err2 != nil {
+		return "", 0, 0, fmt.Errorf("taille du volet illisible : %q", body[i+1:])
+	}
+	return body[:i+1], width, height, nil
 }
 
 // SwitchClient makes the client show the pane.

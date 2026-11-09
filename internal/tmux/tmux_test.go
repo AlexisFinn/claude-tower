@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -107,6 +108,13 @@ func TestExecRunnerTimeoutWithLingeringChild(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "délai") {
 		t.Errorf("error does not mention the timeout: %v", err)
+	}
+}
+
+func TestExecRunnerKeepsOutputWhenChildHoldsPipe(t *testing.T) {
+	out, err := ExecRunner(DefaultTimeout)(context.Background(), nil, "sh", "-c", "echo hello; sleep 1 &")
+	if !errors.Is(err, exec.ErrWaitDelay) || string(out) != "hello\n" {
+		t.Errorf("out=%q err=%v", out, err)
 	}
 }
 
@@ -212,21 +220,87 @@ func TestPaneAttached(t *testing.T) {
 }
 
 func TestCaptureAndSwitchClient(t *testing.T) {
-	r := &recorder{reply: func([]string) ([]byte, error) { return []byte("line1\nline2\n"), nil }}
+	r := &recorder{reply: func([]string) ([]byte, error) { return []byte("line1\nline2\n100\t30\n"), nil }}
 	srv := r.server()
-	got, err := srv.Capture(context.Background(), "%4")
-	if err != nil || got != "line1\nline2\n" {
-		t.Errorf("capture: %q %v", got, err)
+	got, w, h, err := srv.Capture(context.Background(), "%4")
+	if err != nil || got != "line1\nline2\n" || w != 100 || h != 30 {
+		t.Errorf("capture: %q %dx%d %v", got, w, h, err)
 	}
 	if err := srv.SwitchClient(context.Background(), "/dev/pts/1", "%4"); err != nil {
 		t.Fatal(err)
 	}
 	want := [][]string{
-		{"capture-pane", "-p", "-e", "-t", "%4"},
+		{"capture-pane", "-p", "-e", "-t", "%4", ";", "display-message", "-p", "-t", "%4", "#{pane_width}\t#{pane_height}"},
 		{"switch-client", "-c", "/dev/pts/1", "-t", "%4"},
 	}
 	if !reflect.DeepEqual(r.commands(), want) {
 		t.Errorf("commands: %v", r.commands())
+	}
+}
+
+func TestParseCapture(t *testing.T) {
+	cases := []struct {
+		name, out, text string
+		w, h            int
+		wantErr         bool
+	}{
+		{"text then size", "a\nb\n80\t24\n", "a\nb\n", 80, 24, false},
+		{"text that looks like a size", "1\t2\n80\t24\n", "1\t2\n", 80, 24, false},
+		{"size only", "80\t24\n", "", 80, 24, false},
+		{"empty", "", "", 0, 0, true},
+		{"no tab", "a\n80 24\n", "", 0, 0, true},
+		{"not numbers", "a\nx\ty\n", "", 0, 0, true},
+	}
+	for _, c := range cases {
+		text, w, h, err := parseCapture(c.out)
+		if (err != nil) != c.wantErr || text != c.text || w != c.w || h != c.h {
+			t.Errorf("%s: got %q %dx%d err=%v", c.name, text, w, h, err)
+		}
+	}
+}
+
+func TestCaptureReturnsSizeOfTheLivePane(t *testing.T) {
+	srv := testServer(t, "sleep")
+	out := strings.TrimSpace(mustExec(t, srv, "display-message", "-p", "-t", "main:", "#{pane_id}"))
+	text, w, h, err := srv.Capture(context.Background(), out)
+	if err != nil || w != 80 || h != 24 || strings.Count(text, "\n") != 24 {
+		t.Fatalf("w=%d h=%d lines=%d err=%v", w, h, strings.Count(text, "\n"), err)
+	}
+	mustExec(t, srv, "resize-window", "-t", "main:", "-x", "100", "-y", "30")
+	text, w, h, err = srv.Capture(context.Background(), out)
+	if err != nil || w != 100 || h != 30 || strings.Count(text, "\n") != 30 {
+		t.Errorf("after resize: w=%d h=%d lines=%d err=%v", w, h, strings.Count(text, "\n"), err)
+	}
+}
+
+func TestCandidateServersIncludePrivateSocket(t *testing.T) {
+	userDir, err := os.MkdirTemp("/tmp", "ct")
+	if err != nil {
+		t.Fatal(err)
+	}
+	privDir, err := os.MkdirTemp("/tmp", "ct")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(userDir); os.RemoveAll(privDir) })
+	for _, p := range []string{filepath.Join(userDir, "default"), filepath.Join(privDir, "tmux.sock")} {
+		l, err := net.Listen("unix", p)
+		if err != nil {
+			t.Skipf("unix sockets unavailable: %v", err)
+		}
+		t.Cleanup(func() { l.Close() })
+	}
+	os.WriteFile(filepath.Join(privDir, "env-123"), nil, 0o600)
+	var got []string
+	for _, s := range CandidateServers(userDir, filepath.Join(privDir, "tmux.sock"), "tmux", nil) {
+		got = append(got, s.Socket)
+	}
+	want := []string{filepath.Join(userDir, "default"), filepath.Join(privDir, "tmux.sock")}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v want %v", got, want)
+	}
+	if got := CandidateServers(userDir, "", "tmux", nil); len(got) != 1 {
+		t.Errorf("without private socket: %v", got)
 	}
 }
 

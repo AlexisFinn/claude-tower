@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -284,5 +285,158 @@ func TestTmuxLocationsUnknownWhenTreeUnreadable(t *testing.T) {
 	got := tmuxLocations(context.Background(), []registry.Session{{PID: 1}}, nil, "", readTree, nil)
 	if got[1] != "?" {
 		t.Errorf("got %v", got)
+	}
+}
+
+func TestRunSubcommandPassesArgumentsUntouched(t *testing.T) {
+	var got []string
+	called := false
+	d := fakeDeps(nil)
+	d.run = func(args []string) error { got, called = args, true; return nil }
+	args := []string{"run", "--resume", "-c", "--model", "x", "--dir", "y", "bar"}
+	code, out, errOut := runArgsDeps(args, env(nil), d)
+	if code != 0 || out != "" || errOut != "" || !called {
+		t.Fatalf("code=%d out=%q err=%q called=%v", code, out, errOut, called)
+	}
+	if want := []string{"--resume", "-c", "--model", "x", "--dir", "y", "bar"}; !equal(got, want) {
+		t.Errorf("got %q want %q", got, want)
+	}
+}
+
+func TestRunSubcommandFailure(t *testing.T) {
+	d := fakeDeps(nil)
+	d.run = func([]string) error { return errors.New("claude introuvable") }
+	code, _, errOut := runArgsDeps([]string{"run"}, env(nil), d)
+	if code != 1 || !strings.Contains(errOut, "claude introuvable") {
+		t.Errorf("code=%d err=%q", code, errOut)
+	}
+}
+
+func equal(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+type execCall struct {
+	path      string
+	argv, env []string
+}
+
+func TestExecEnvAppliesFileAndRemovesIt(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "env")
+	if err := os.WriteFile(file, []byte("PATH=/p\x00FOO=1\x00TERM=stale\x00"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var got execCall
+	d := fakeDeps(nil)
+	d.environ = func() []string { return []string{"TERM=tmux-256color", "TMUX=/s,1,0", "TMUX_PANE=%2", "HOME=/ignored"} }
+	d.exec = func(path string, argv, env []string) error { got = execCall{path, argv, env}; return nil }
+	code, _, errOut := runArgsDeps([]string{"exec-env", file, "--", "/bin/claude", "--resume", "-c"}, env(nil), d)
+	if code != 0 {
+		t.Fatalf("code=%d err=%q", code, errOut)
+	}
+	if got.path != "/bin/claude" || !equal(got.argv, []string{"/bin/claude", "--resume", "-c"}) {
+		t.Errorf("command: %+v", got)
+	}
+	for _, want := range []string{"PATH=/p", "FOO=1", "TERM=tmux-256color", "TMUX=/s,1,0", "TMUX_PANE=%2"} {
+		if !equal(filter(got.env, want), []string{want}) {
+			t.Errorf("%q missing from %v", want, got.env)
+		}
+	}
+	for _, bad := range []string{"TERM=stale", "HOME=/ignored"} {
+		if len(filter(got.env, bad)) != 0 {
+			t.Errorf("%q leaked into %v", bad, got.env)
+		}
+	}
+	if _, err := os.Stat(file); !os.IsNotExist(err) {
+		t.Error("environment file not removed")
+	}
+}
+
+func filter(env []string, want string) []string {
+	var out []string
+	for _, e := range env {
+		if e == want {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func TestExecEnvErrors(t *testing.T) {
+	d := fakeDeps(nil)
+	d.exec = func(string, []string, []string) error { t.Error("exec called"); return nil }
+	d.environ = func() []string { return nil }
+	for _, args := range [][]string{
+		{"exec-env"},
+		{"exec-env", "f", "x", "y"},
+		{"exec-env", filepath.Join(t.TempDir(), "missing"), "--", "/bin/claude"},
+	} {
+		if code, _, errOut := runArgsDeps(args, env(nil), d); code != 1 || errOut == "" {
+			t.Errorf("%v: code=%d err=%q", args, code, errOut)
+		}
+	}
+}
+
+func TestExecEnvResolvesBareCommandThroughPATH(t *testing.T) {
+	bin := t.TempDir()
+	tool := filepath.Join(bin, "mytool")
+	if err := os.WriteFile(tool, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	file := filepath.Join(t.TempDir(), "env")
+	if err := os.WriteFile(file, []byte("A=1\x00"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var got execCall
+	d := fakeDeps(nil)
+	d.environ = func() []string { return nil }
+	d.exec = func(path string, argv, env []string) error { got = execCall{path, argv, env}; return nil }
+	if code, _, errOut := runArgsDeps([]string{"exec-env", file, "--", "mytool", "-x"}, env(nil), d); code != 0 {
+		t.Fatalf("code=%d err=%q", code, errOut)
+	}
+	if got.path != tool || !equal(got.argv, []string{"mytool", "-x"}) {
+		t.Errorf("got %+v", got)
+	}
+
+	if err := os.WriteFile(file, []byte("A=1\x00"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got = execCall{}
+	if code, _, errOut := runArgsDeps([]string{"exec-env", file, "--", "missing-tool"}, env(nil), d); code != 1 || errOut == "" || got.path != "" {
+		t.Errorf("code=%d err=%q exec=%+v", code, errOut, got)
+	}
+}
+
+func TestSystemLocationsDoNotCreatePrivateDirectory(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	home := t.TempDir()
+	runtimeDir := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
+	t.Setenv("TMUX_TMPDIR", t.TempDir())
+	sessions := []registry.Session{{PID: 1}}
+	got := systemLocations(context.Background(), sessions, os.Getenv)
+	if len(got) != 1 {
+		t.Fatalf("locations: %v", got)
+	}
+	for _, dir := range []string{
+		filepath.Join(runtimeDir, "claude-tower"),
+		filepath.Join(home, ".local", "state", "claude-tower"),
+		filepath.Join(home, "Library", "Application Support", "claude-tower"),
+	} {
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Errorf("%s created (err=%v)", dir, err)
+		}
 	}
 }

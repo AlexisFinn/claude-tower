@@ -96,6 +96,23 @@ func (r Reader) Sessions() ([]Session, error) {
 	return out, nil
 }
 
+// Session reads the registry file of a single session. ok is false when the
+// file is missing, must be skipped, or the process is no longer alive.
+func (r Reader) Session(pid int) (s Session, ok bool) {
+	alive, read := r.Alive, r.ReadFile
+	if alive == nil {
+		alive = DefaultAlive(runtime.GOOS)
+	}
+	if read == nil {
+		read = os.ReadFile
+	}
+	s, procStart, ok := readSession(read, filepath.Join(r.Dir, "sessions", strconv.Itoa(pid)+".json"), pid)
+	if !ok || !alive(pid, procStart) {
+		return Session{}, false
+	}
+	return s, true
+}
+
 // readSession decodes one registry file, retrying once after a short delay in
 // case the file is being rewritten. ok is false for files that must be skipped.
 func readSession(read func(string) ([]byte, error), path string, pid int) (s Session, procStart string, ok bool) {

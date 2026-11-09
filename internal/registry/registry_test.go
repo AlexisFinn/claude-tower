@@ -347,3 +347,19 @@ func TestPidAliveEPERM(t *testing.T) {
 		t.Error("PID 1 (EPERM) reported dead")
 	}
 }
+
+func TestSingleSession(t *testing.T) {
+	dir := t.TempDir()
+	writeSession(t, dir, "100.json", full)
+	writeSession(t, dir, "200.json", `{"pid":200,"status":"busy"}`)
+	r := Reader{Dir: dir, Alive: func(pid int, _ string) bool { return pid == 100 }}
+	if s, ok := r.Session(100); !ok || s.PID != 100 || s.RawStatus != "idle" {
+		t.Errorf("got %+v ok=%v", s, ok)
+	}
+	if _, ok := r.Session(200); ok {
+		t.Error("dead process returned")
+	}
+	if _, ok := r.Session(300); ok {
+		t.Error("missing file returned")
+	}
+}
