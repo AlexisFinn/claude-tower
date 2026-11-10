@@ -11,20 +11,17 @@
   import PromptBar from './PromptBar.svelte'
   import ShortcutsDialog from './ShortcutsDialog.svelte'
   import Toasts from './Toasts.svelte'
-  import { sameSize, type GridSize } from './lib/bodySize'
   import { errorMessage } from './lib/errors'
   import { routeKey, type KeyTarget } from './lib/keyRouting'
+  import { closeLayer, confirmation, keyLayers, layerOf, openLayer, type LayerKind, type Layers } from './lib/layers'
   import type { GridAction } from './lib/keys'
   import { backgroundOf } from './lib/cardText'
   import { insetRect, layout } from './lib/layout'
   import { move } from './lib/navigation'
   import { createRefresher } from './lib/refresher'
-  import { createFailureTracker } from './lib/screenFailures'
-  import { reconcileSelection } from './lib/selection'
-  import { startFailureText } from './lib/startFailures'
+  import { createScreenFeed } from './lib/screenFeed'
   import { summarizeStates } from './lib/summary'
   import { EventsOn } from '../wailsjs/runtime/runtime'
-  import { createFitRequests } from './lib/fitRequests'
   import { isQuitShortcut } from './lib/quitShortcut'
   import { createToasts, type Toast, type ToastKind } from './lib/toasts'
   import { createTypingPause } from './lib/typingPause'
@@ -37,149 +34,60 @@
   let cards = $state.raw<core.Card[]>([])
   let screens = $state.raw<Record<number, core.Screen>>({})
   let selected = $state<number | null>(null)
-  let fullscreen = $state<core.Card | null>(null)
-  let confirmKill = $state<core.Card | null>(null)
-  let confirmQuit = $state(false)
+  let layers = $state.raw<Layers>([])
   let unavailable = $state.raw<Set<number>>(new Set())
-  let helpOpen = $state(false)
-  let newSessionOpen = $state(false)
   let loaded = $state(false)
   let toasts = $state.raw<Toast[]>([])
   let areaWidth = $state(0)
   let areaHeight = $state(0)
   let promptBar: PromptBar
 
-  const sizes = new Map<number, GridSize>()
-  const fits = new Map<number, GridSize>()
-  const fitRequests = createFitRequests()
-  const visible = new Set<number>()
-  const failures = createFailureTracker()
   const notifier = createToasts((list) => (toasts = list))
   // The thumbnails are not refreshed while the user types, so typing stays responsive.
   const typing = createTypingPause({ onResume: () => refresher.kick() })
+  const feed = createScreenFeed({
+    cards: Cards,
+    screen: Screen,
+    fitSession: FitSession,
+    startFailures: StartFailures,
+    fullscreenOpen: () => fullscreen !== null,
+    documentHidden: () => document.hidden,
+    typing: () => typing.active(),
+    getSelected: () => selected,
+    requestRefresh: () => refresher.kick(),
+    onLoaded: () => (loaded = true),
+    onCards: (list) => (cards = list),
+    onScreens: (list) => (screens = list),
+    onUnavailable: (list) => (unavailable = list),
+    onSelected: (pid) => (selected = pid),
+    notify,
+  })
 
   const gridWidth = $derived(Math.max(0, areaWidth - 2 * GRID_PADDING))
   const gridHeight = $derived(Math.max(0, areaHeight - 2 * GRID_PADDING))
   const placed = $derived(layout(cards.length, gridWidth, gridHeight))
   const summary = $derived(summarizeStates(cards))
   const selectedCard = $derived(cards.find((c) => c.PID === selected) ?? null)
+  const fullscreen = $derived(layerOf(layers, 'fullscreen')?.card ?? null)
+  const confirmKill = $derived(layerOf(layers, 'kill')?.card ?? null)
+  const confirmQuit = $derived(layerOf(layers, 'quit') !== undefined)
+  const helpOpen = $derived(layerOf(layers, 'help') !== undefined)
+  const newSessionOpen = $derived(layerOf(layers, 'newSession') !== undefined)
 
   function notify(kind: ToastKind, text: string): void {
     notifier.push(kind, text)
   }
 
-  function onMeasure(pid: number, size: GridSize | null): void {
-    if (size === null) {
-      sizes.delete(pid)
-      return
-    }
-    const known = sizes.get(pid)
-    sizes.set(pid, size)
-    if (!sameSize(known, size)) refresher.kick()
+  function dismiss(kind: LayerKind): void {
+    layers = closeLayer(layers, kind)
   }
 
-  function onFit(pid: number, size: GridSize | null): void {
-    if (size === null) {
-      fits.delete(pid)
-      fitRequests.forget(pid)
-    } else {
-      fits.set(pid, size)
-    }
-  }
-
-  /**
-   * Resizes a session the application launched to the size its card wants,
-   * when its last screen has another size. The engine leaves alone a session
-   * that a client shows, such as the fullscreen view.
-   */
-  async function fit(card: core.Card, screen: core.Screen): Promise<void> {
-    const size = fits.get(card.PID)
-    if (!size || !fitRequests.shouldAsk(card.PID, size, { cols: screen.Width, rows: screen.Height }, card.Attached)) return
-    const ticket = fitRequests.ticket(card.PID)
-    try {
-      const applied = await FitSession(card.PID, size.cols, size.rows)
-      fitRequests.record(card.PID, size, applied ? 'applied' : 'kept', ticket)
-    } catch {
-      fitRequests.record(card.PID, size, 'failed', ticket)
-    }
-  }
-
-  function onVisible(pid: number, isVisible: boolean): void {
-    if (!isVisible) {
-      visible.delete(pid)
-      return
-    }
-    if (visible.has(pid)) return
-    visible.add(pid)
-    refresher.kick()
-  }
-
-  function syncUnavailable(list: core.Card[]): void {
-    const next = new Set(list.filter((c) => failures.unavailable(c.PID)).map((c) => c.PID))
-    const same = next.size === unavailable.size && [...next].every((pid) => unavailable.has(pid))
-    if (!same) unavailable = next
-  }
-
-  function setUnavailable(pid: number, value: boolean): void {
-    if (unavailable.has(pid) === value) return
-    const next = new Set(unavailable)
-    if (value) next.add(pid)
-    else next.delete(pid)
-    unavailable = next
-  }
-
-  async function loadScreens(list: core.Card[]): Promise<void> {
-    const next: Record<number, core.Screen> = {}
-    for (const card of list) {
-      const known = screens[card.PID]
-      if (known) next[card.PID] = known
-    }
-    screens = next
-    failures.prune(list.map((c) => c.PID))
-    fitRequests.prune(list.map((c) => c.PID))
-    syncUnavailable(list)
-    for (const card of list) {
-      const size = sizes.get(card.PID)
-      if (!card.InTmux || !size || !visible.has(card.PID)) continue
-      if (fullscreen !== null || document.hidden || typing.active()) return
-      try {
-        const screen = await Screen(card.PID, size.rows)
-        screens = { ...screens, [card.PID]: screen }
-        failures.succeed(card.PID)
-        setUnavailable(card.PID, false)
-        if (fullscreen === null) await fit(card, screen)
-      } catch {
-        setUnavailable(card.PID, failures.fail(card.PID))
-      }
-    }
-  }
-
-  async function cycle(): Promise<void> {
-    let list: core.Card[]
-    try {
-      list = [...(await Cards())].sort((a, b) => a.Order - b.Order)
-    } catch (e) {
-      notify('error', errorMessage(e))
-      return
-    }
-    loaded = true
-    try {
-      for (const f of await StartFailures()) notify('error', startFailureText(f))
-    } catch {
-      // A failed read leaves the failures for the next cycle.
-    }
-    const oldPids = cards.map((c) => c.PID)
-    cards = list
-    selected = reconcileSelection(
-      oldPids,
-      list.map((c) => c.PID),
-      selected,
-    )
-    await loadScreens(list)
+  function openHelp(): void {
+    layers = openLayer(layers, { kind: 'help' })
   }
 
   const refresher = createRefresher({
-    run: cycle,
+    run: feed.cycle,
     paused: () => document.hidden || fullscreen !== null,
   })
 
@@ -213,13 +121,13 @@
       notify('info', 'Cette session ne tourne pas dans tmux : lecture seule.')
       return
     }
-    fullscreen = card
+    layers = openLayer(layers, { kind: 'fullscreen', card })
   }
 
   function closeFullscreen(): void {
     if (fullscreen === null) return
-    fitRequests.forget(fullscreen.PID)
-    fullscreen = null
+    feed.forgetFit(fullscreen.PID)
+    dismiss('fullscreen')
     refresher.kick()
   }
 
@@ -235,14 +143,14 @@
   }
 
   function newSession(): void {
-    newSessionOpen = true
+    layers = openLayer(layers, { kind: 'newSession' })
   }
 
   // A start in progress, folder dialog included, keeps a second one from opening another dialog.
   let starting = false
 
   async function startSession(name: string): Promise<void> {
-    newSessionOpen = false
+    dismiss('newSession')
     if (starting) return
     starting = true
     try {
@@ -256,20 +164,20 @@
   }
 
   function askQuit(): void {
-    confirmQuit = true
+    layers = openLayer(layers, { kind: 'quit' })
   }
 
   /** Answers a close request of the window: the confirmation shows above everything else. */
   function onQuitRequested(): void {
     void AckQuit()
     closeFullscreen()
-    helpOpen = false
-    newSessionOpen = false
+    dismiss('help')
+    dismiss('newSession')
     askQuit()
   }
 
   async function quitConfirmed(): Promise<void> {
-    confirmQuit = false
+    dismiss('quit')
     try {
       await Quit()
     } catch (e) {
@@ -279,7 +187,7 @@
 
   async function killConfirmed(): Promise<void> {
     const card = confirmKill
-    confirmKill = null
+    dismiss('kill')
     if (!card) return
     try {
       await Kill(card.PID)
@@ -295,7 +203,7 @@
       notify('info', "Seules les sessions lancées par l'application peuvent être arrêtées.")
       return
     }
-    confirmKill = card
+    layers = openLayer(layers, { kind: 'kill', card })
   }
 
   function openFullscreenOf(pid: number): void {
@@ -342,7 +250,7 @@
         askKill(selectedCard)
         break
       case 'help':
-        helpOpen = true
+        openHelp()
         break
     }
   }
@@ -353,29 +261,24 @@
   }
 
   function onKeydown(e: KeyboardEvent): void {
-    const dialogOpen = confirmQuit || confirmKill !== null || newSessionOpen || helpOpen
-    if (isQuitShortcut(e, fullscreen !== null || dialogOpen)) {
+    if (isQuitShortcut(e, layers.length > 0)) {
       e.preventDefault()
       askQuit()
       return
     }
-    const route = routeKey(
-      { fullscreen: fullscreen !== null, confirm: confirmKill !== null || confirmQuit, newSession: newSessionOpen, help: helpOpen },
-      e,
-      keyTarget(e.target),
-    )
+    const route = routeKey(keyLayers(layers), e, keyTarget(e.target))
     if (route === null) return
     e.preventDefault()
     if (route.layer === 'confirm') {
-      if (confirmQuit) {
+      if (confirmation(layers) === 'quit') {
         if (route.action === 'accept') void quitConfirmed()
-        else confirmQuit = false
+        else dismiss('quit')
       } else if (route.action === 'accept') void killConfirmed()
-      else confirmKill = null
+      else dismiss('kill')
     } else if (route.layer === 'newSession') {
-      newSessionOpen = false
+      dismiss('newSession')
     } else if (route.layer === 'help') {
-      helpOpen = false
+      dismiss('help')
     } else {
       run(route.action)
     }
@@ -396,7 +299,7 @@
 <svelte:window onkeydown={onKeydown} onclickcapture={releaseMouseFocus} />
 
 <div class="tower">
-  <AppBar {summary} onHelp={() => (helpOpen = true)} onNew={newSession} onQuit={askQuit} />
+  <AppBar {summary} onHelp={openHelp} onNew={newSession} onQuit={askQuit} />
 
   <div class="main">
     <div class="area" bind:clientWidth={areaWidth} bind:clientHeight={areaHeight}>
@@ -418,9 +321,9 @@
               onFocus={(pid) => void focusCard(pid)}
               onFullscreen={openFullscreenOf}
               onKill={askKillOf}
-              {onMeasure}
-              {onFit}
-              {onVisible}
+              onMeasure={feed.measure}
+              onFit={feed.fit}
+              onVisible={feed.visibility}
             />
           {/each}
         </div>
@@ -432,7 +335,7 @@
   <PromptBar
     bind:this={promptBar}
     card={selectedCard}
-    dropBlocked={fullscreen !== null || helpOpen || confirmKill !== null || confirmQuit || newSessionOpen}
+    dropBlocked={layers.length > 0}
     onSent={() => {
       typing.end()
       refresher.kick()
@@ -446,26 +349,26 @@
   {/if}
 
   {#if helpOpen}
-    <ShortcutsDialog onClose={() => (helpOpen = false)} />
+    <ShortcutsDialog onClose={() => dismiss('help')} />
   {/if}
 
   {#if newSessionOpen}
-    <NewSessionDialog onSubmit={(name) => void startSession(name)} onClose={() => (newSessionOpen = false)} />
+    <NewSessionDialog onSubmit={(name) => void startSession(name)} onClose={() => dismiss('newSession')} />
   {/if}
 
   {#if confirmQuit}
-    <Dialog title="Quitter Claude Tower" role="alertdialog" onClose={() => (confirmQuit = false)}>
+    <Dialog title="Quitter Claude Tower" role="alertdialog" onClose={() => dismiss('quit')}>
       <p class="confirm">
         Les sessions continuent de tourner après la fermeture : quitter l’application ne les arrête pas. Tu les
         retrouves en la relançant.
       </p>
       <div class="actions">
-        <button class="btn" title="Échap" onclick={() => (confirmQuit = false)}>Annuler</button>
+        <button class="btn" title="Échap" onclick={() => dismiss('quit')}>Annuler</button>
         <button class="btn btn-primary" data-autofocus title="Entrée" onclick={() => void quitConfirmed()}>Quitter</button>
       </div>
     </Dialog>
   {:else if confirmKill !== null}
-    <Dialog title="Arrêter la session" role="alertdialog" onClose={() => (confirmKill = null)}>
+    <Dialog title="Arrêter la session" role="alertdialog" onClose={() => dismiss('kill')}>
       <p class="confirm">
         {#if confirmKill.Detached}
           Arrêter la session d’arrière-plan <strong>{confirmKill.Name}</strong> ? Sa conversation est
@@ -476,7 +379,7 @@
         {/if}
       </p>
       <div class="actions">
-        <button class="btn" data-autofocus title="Échap" onclick={() => (confirmKill = null)}>Annuler</button>
+        <button class="btn" data-autofocus title="Échap" onclick={() => dismiss('kill')}>Annuler</button>
         <button class="btn btn-danger" onclick={() => void killConfirmed()}>Arrêter la session</button>
       </div>
     </Dialog>

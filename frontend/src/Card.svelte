@@ -1,25 +1,14 @@
-<script module lang="ts">
-  import { measureFont, THUMBNAIL_FONT_FAMILY } from './lib/thumbnail'
-
-  // The font is the same in every card, and loaded before they mount, so its cell size per pixel of font is measured once.
-  const cellRatio = measureFont(THUMBNAIL_FONT_FAMILY).cell
-</script>
-
 <script lang="ts">
-  import { onMount, untrack } from 'svelte'
-  import { Terminal } from '@xterm/xterm'
-  import { Unicode11Addon } from '@xterm/addon-unicode11'
+  import { onMount } from 'svelte'
   import type { core } from '../wailsjs/go/models'
   import Icon from './Icon.svelte'
   import StatePill from './StatePill.svelte'
+  import ThumbnailCanvas from './ThumbnailCanvas.svelte'
   import { parseActivity } from './lib/activity'
-  import { bodyGeometry, fitGrid, sameGeometry, type BodyGeometry, type GridSize } from './lib/bodySize'
+  import type { GridSize } from './lib/bodySize'
   import { backgroundLabel, type BackgroundTasks } from './lib/cardText'
-  import { watchDevicePixelRatio } from './lib/devicePixelRatio'
   import { frameClass } from './lib/frame'
   import type { Rect } from './lib/layout'
-  import { screenSequence } from './lib/screenSequence'
-  import { createThumbnail, type Thumbnail } from './lib/thumbnail'
 
   interface Props {
     card: core.Card
@@ -55,140 +44,36 @@
   }: Props = $props()
 
   let root: HTMLDivElement
-  let canvas: HTMLCanvasElement | undefined = $state()
-  let bodyWidth = $state(0)
-  let bodyHeight = $state(0)
-  let term = $state.raw<Terminal | null>(null)
-  let thumbnail = $state.raw<Thumbnail | null>(null)
-  let geometry = $state.raw<BodyGeometry | null>(null)
-  let dpr = $state(window.devicePixelRatio || 1)
-  let lastContentKey = ''
-  let lastPaintKey = ''
-  let current: { geometry: BodyGeometry; dpr: number } | null = null
 
   // The card object is replaced on every refresh: effects depend on these values instead.
   const pid = $derived(card.PID)
 
-  const inTmux = $derived(card.InTmux)
   const activity = $derived(parseActivity(card.Activity))
   const activityIcon = $derived(
     activity.kind === 'tool' ? 'zap' : activity.kind === 'prompt' ? 'arrowRight' : 'message',
   )
   const backgroundText = $derived(backgroundLabel(background))
-  const paneCols = $derived(screen && screen.Width > 0 ? screen.Width : null)
-  const paneRows = $derived(screen && screen.Height > 0 ? screen.Height : null)
-
-  $effect(() => {
-    if (!inTmux || !canvas) return
-    const t = new Terminal({
-      cols: 80,
-      rows: 24,
-      disableStdin: true,
-      scrollback: 0,
-      allowProposedApi: true,
-    })
-    t.loadAddon(new Unicode11Addon())
-    t.unicode.activeVersion = '11'
-    lastContentKey = ''
-    lastPaintKey = ''
-    term = t
-    thumbnail = createThumbnail(canvas)
-    return () => {
-      term = null
-      thumbnail = null
-      current = null
-      t.dispose()
-    }
-  })
 
   onMount(() => {
     const observer = new IntersectionObserver((entries) => {
       for (const entry of entries) onVisible(pid, entry.isIntersecting)
     })
     observer.observe(root)
-    const stopWatching = watchDevicePixelRatio((ratio) => (dpr = ratio))
     return () => {
       observer.disconnect()
-      stopWatching()
       onVisible(pid, false)
       onMeasure(pid, null)
       onFit(pid, null)
     }
   })
 
-  // The geometry only depends on the body and pane sizes, and the canvas is
-  // taken out of the flow, so drawing never changes the body size again.
-  $effect(() => {
-    if (!inTmux || bodyWidth <= 0 || bodyHeight <= 0) return
-    const next = bodyGeometry(paneCols, paneRows, bodyWidth, bodyHeight, cellRatio)
-    if (!sameGeometry(untrack(() => geometry), next)) geometry = next
-    onMeasure(pid, { cols: next.cols, rows: next.rows })
-  })
-
   const resizable = $derived(card.Private && !card.Detached)
-  $effect(() => {
-    if (!resizable || !inTmux || bodyWidth <= 0 || bodyHeight <= 0) {
-      onFit(pid, null)
-      return
-    }
-    onFit(pid, fitGrid(bodyWidth, bodyHeight, cellRatio))
-  })
-
-  /** Draws the buffer with the latest geometry; a write still pending finishes by calling it again. */
-  function paint(): void {
-    if (!term || !thumbnail || !current) return
-    thumbnail.draw(term.buffer.active, current.geometry, current.dpr)
-  }
-
-  $effect(() => {
-    const t = term
-    const g = geometry
-    const ratio = dpr
-    if (!t || !g || !thumbnail || !screen) return
-    const contentKey = `${screen.Hash}|${g.cols}x${g.rows}`
-    const paintKey = `${contentKey}|${g.font}|${ratio}`
-    if (paintKey === lastPaintKey) return
-    lastPaintKey = paintKey
-    current = { geometry: g, dpr: ratio }
-    if (contentKey === lastContentKey) {
-      paint()
-      return
-    }
-    lastContentKey = contentKey
-    t.resize(g.cols, g.rows)
-    t.write(screenSequence(screen.Lines, g.rows), paint)
-  })
 
   $effect(() => {
     if (selected) root.scrollIntoView({ block: 'nearest' })
   })
 
   const placement = $derived(`${rect.x}|${rect.y}|${rect.width}|${rect.height}`)
-  let alignFrame = 0
-
-  /** Realigns the canvas on device pixels once the layout is done, at most once per frame. */
-  function scheduleAlign(): void {
-    if (alignFrame !== 0) return
-    alignFrame = requestAnimationFrame(() => {
-      alignFrame = 0
-      thumbnail?.align(dpr)
-    })
-  }
-
-  // A card that moves or scrolls without redrawing realigns its canvas.
-  $effect(() => {
-    void placement
-    if (thumbnail) scheduleAlign()
-  })
-
-  onMount(() => {
-    window.addEventListener('scroll', scheduleAlign, { capture: true, passive: true })
-    return () => {
-      window.removeEventListener('scroll', scheduleAlign, { capture: true })
-      cancelAnimationFrame(alignFrame)
-    }
-  })
-
   function act(e: MouseEvent, action: (pid: number) => void): void {
     e.stopPropagation()
     onSelect(pid)
@@ -249,9 +134,7 @@
 
   {#if card.InTmux}
     <div class="screen">
-      <div class="fill" bind:clientWidth={bodyWidth} bind:clientHeight={bodyHeight}>
-        <canvas bind:this={canvas} class:ready={geometry !== null}></canvas>
-      </div>
+      <ThumbnailCanvas {pid} {screen} {placement} {resizable} {onMeasure} {onFit} />
       {#if unavailable}
         <div class="stale" role="status">
           <Icon name="monitorOff" size={18} />
@@ -431,28 +314,6 @@
     background: var(--screen);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
-  }
-
-  .fill {
-    position: absolute;
-    inset: 4px;
-    overflow: hidden;
-  }
-
-  /* The canvas is sized in CSS pixels by the thumbnail and taken out of the flow, so it is
-     clipped by .fill and never changes its size. */
-  canvas {
-    position: absolute;
-    top: 0;
-    left: 0;
-    display: block;
-    pointer-events: none;
-    user-select: none;
-    visibility: hidden;
-  }
-
-  canvas.ready {
-    visibility: visible;
   }
 
   .stale {
