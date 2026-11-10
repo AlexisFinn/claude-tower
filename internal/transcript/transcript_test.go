@@ -42,6 +42,12 @@ func TestToolUse(t *testing.T) {
 		{"unknown tool", asst(`{"type":"tool_use","name":"Weird","input":{"command":"x"}}`), "Weird"},
 		{"missing arg", asst(`{"type":"tool_use","name":"Bash","input":{}}`), "Bash"},
 		{"last tool_use wins", asst(`{"type":"tool_use","name":"Read","input":{"file_path":"/1"}},{"type":"text","text":"hi"},{"type":"tool_use","name":"Edit","input":{"file_path":"/2"}}`), "Edit: /2"},
+		{"number value", asst(`{"type":"tool_use","name":"Bash","input":{"command":5}}`), "Bash"},
+		{"object value", asst(`{"type":"tool_use","name":"Read","input":{"file_path":{"a":1}}}`), "Read"},
+		{"null value", asst(`{"type":"tool_use","name":"Grep","input":{"pattern":null}}`), "Grep"},
+		{"other keys of wrong type", asst(`{"type":"tool_use","name":"Bash","input":{"timeout":"x","env":[1,{"a":2}],"command":"ls"}}`), "Bash: ls"},
+		{"escaped string", asst(`{"type":"tool_use","name":"Bash","input":{"command":"echo \"a\"\u00e9"}}`), `Bash: echo "a"é`},
+		{"input is not an object", asst(`{"type":"tool_use","name":"Bash","input":"ls"}`), ""},
 	}
 	for _, c := range cases {
 		if got := last(t, c.line).Text; got != c.want {
@@ -306,5 +312,30 @@ func TestPath(t *testing.T) {
 	}
 	if got := f.Path("../x"); got != "" {
 		t.Errorf("invalid session ID: %q", got)
+	}
+}
+
+func TestScanLinesFromTheEnd(t *testing.T) {
+	first := `{"type":"user","message":{"content":"first"}}`
+	second := `{"type":"user","message":{"content":"second"}}`
+	cases := []struct {
+		name string
+		data string
+		want string
+	}{
+		{"last line without newline", first + "\n" + second, "› second"},
+		{"trailing blank lines", first + "\n" + second + "\n\n\n", "› second"},
+		{"blank lines between", first + "\n\n\n" + second + "\nbad\n", "› second"},
+		{"only the first line", first, "› first"},
+		{"unretained last line", first + "\n" + `{"type":"attachment"}` + "\n", "› first"},
+		{"CRLF", first + "\r\n" + second + "\r\n", "› second"},
+		{"empty", "", ""},
+		{"newlines only", "\n\n", ""},
+	}
+	for _, c := range cases {
+		act, found := scanLines([]byte(c.data))
+		if act.Text != c.want || found != (c.want != "") {
+			t.Errorf("%s: got %q %v", c.name, act.Text, found)
+		}
 	}
 }

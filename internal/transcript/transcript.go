@@ -201,20 +201,22 @@ type record struct {
 }
 
 type block struct {
-	Type  string         `json:"type"`
-	Text  string         `json:"text"`
-	Name  string         `json:"name"`
-	Input map[string]any `json:"input"`
+	Type  string                     `json:"type"`
+	Text  string                     `json:"text"`
+	Name  string                     `json:"name"`
+	Input map[string]json.RawMessage `json:"input"`
 }
 
 // scanLines walks the lines from the last to the first. found reports whether
 // a retained record produced the text.
 func scanLines(data []byte) (act Activity, found bool) {
-	lines := bytes.Split(data, []byte("\n"))
 	turnKnown := false
-	for i := len(lines) - 1; i >= 0; i-- {
+	for end := len(data); end >= 0; {
+		start := bytes.LastIndexByte(data[:end], '\n') + 1
+		line := data[start:end]
+		end = start - 1
 		var rec record
-		if len(bytes.TrimSpace(lines[i])) == 0 || json.Unmarshal(lines[i], &rec) != nil {
+		if len(bytes.TrimSpace(line)) == 0 || json.Unmarshal(line, &rec) != nil {
 			continue
 		}
 		isTurnMarker := rec.Type == "system" && rec.Subtype == "turn_duration"
@@ -281,7 +283,9 @@ func toolText(b block) string {
 		key = "description"
 	}
 	if key != "" {
-		if arg, _ := b.Input[key].(string); normalize(arg) != "" {
+		var arg string
+		// A value that is not a string leaves the tool name alone.
+		if json.Unmarshal(b.Input[key], &arg) == nil && normalize(arg) != "" {
 			return normalize(b.Name + ": " + arg)
 		}
 	}

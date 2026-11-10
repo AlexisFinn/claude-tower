@@ -345,6 +345,29 @@ func TestEndedIdsAreBounded(t *testing.T) {
 	}
 }
 
+func TestEndedIdsAreForgottenOldestFirstAfterWrapAround(t *testing.T) {
+	tr := NewTracker()
+	for i := 0; i < 2*maxEnded+5; i++ {
+		tr.end(fmt.Sprintf("id%d", i))
+	}
+	for i := 0; i < maxEnded+5; i++ {
+		if _, ok := tr.ended[fmt.Sprintf("id%d", i)]; ok {
+			t.Fatalf("id%d is still remembered", i)
+		}
+	}
+	for i := maxEnded + 5; i < 2*maxEnded+5; i++ {
+		if _, ok := tr.ended[fmt.Sprintf("id%d", i)]; !ok {
+			t.Fatalf("id%d is forgotten", i)
+		}
+	}
+	tr.reset()
+	tr.end("a")
+	tr.end("b")
+	if len(tr.ended) != 2 || len(tr.endedQ) != 2 || tr.endedAt != 0 {
+		t.Errorf("after reset: ended=%d queue=%d at=%d", len(tr.ended), len(tr.endedQ), tr.endedAt)
+	}
+}
+
 func TestReadBufferIsAllocatedOnDemandAndKept(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "s.jsonl")
 	if err := os.WriteFile(path, nil, 0o644); err != nil {

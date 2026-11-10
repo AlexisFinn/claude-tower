@@ -227,3 +227,30 @@ func TestOrphanAttachSessionRemovedAfterTwoSnapshots(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func TestAttachmentsReadOnlyWithBackgroundSessions(t *testing.T) {
+	e := newEnv(t)
+	e.session(100, `"sessionId":"`+idA+`","name":"a","cwd":"/home/u/a","startedAt":1000,"status":"idle"`)
+	e.tree = locate.Tree{100: 10, 10: 1}
+	calls := 0
+	c := e.core(func(o *Options) {
+		o.ReadAttachments = func(context.Context, tmux.Runner) (locate.Attachments, error) {
+			calls++
+			return nil, nil
+		}
+	})
+	if _, err := c.Cards(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 {
+		t.Errorf("attachments read without background session: %d", calls)
+	}
+	bgSession(e)
+	e.tree = locate.Tree{100: 10, 10: 1, 500: 400, 400: 1}
+	if _, err := c.Cards(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Errorf("attachments reads with a background session: %d", calls)
+	}
+}

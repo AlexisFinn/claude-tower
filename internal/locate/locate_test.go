@@ -67,6 +67,39 @@ func TestReadProcFixture(t *testing.T) {
 	}
 }
 
+func TestReadProcSkipsEntriesWithoutFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "40"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "41"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "41", "stat"), []byte("41 (sh) S 40 41 41"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "42"), []byte("42 (sh) S 1 1 1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readProc(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Tree{41: 40}); !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v", got)
+	}
+}
+
+func TestReadProcMissingDirFails(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "absent")
+	if _, err := readProc(missing); err == nil {
+		t.Error("missing directory ignored by readProc")
+	}
+	if _, err := readProcAttachments(missing); err == nil {
+		t.Error("missing directory ignored by readProcAttachments")
+	}
+}
+
 func TestReadTreeOnThisSystem(t *testing.T) {
 	run := func(context.Context, io.Reader, string, ...string) ([]byte, error) {
 		return nil, errors.New("ps unavailable")

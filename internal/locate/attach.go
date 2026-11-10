@@ -3,7 +3,6 @@ package locate
 import (
 	"bytes"
 	"context"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -34,23 +33,17 @@ func readAttachments(ctx context.Context, run tmux.Runner, goos, procDir string)
 }
 
 func readProcAttachments(dir string) (Attachments, error) {
-	paths, err := filepath.Glob(filepath.Join(dir, "[0-9]*", "cmdline"))
-	if err != nil {
-		return nil, err
-	}
 	out := Attachments{}
-	for _, path := range paths {
-		pid, err := strconv.Atoi(filepath.Base(filepath.Dir(path)))
-		if err != nil {
-			continue
-		}
-		data, err := os.ReadFile(path)
-		if err != nil || !bytes.Contains(data, []byte("attach")) {
-			continue
+	err := forEachProc(dir, "cmdline", func(pid int, data []byte) {
+		if !bytes.Contains(data, []byte("attach")) {
+			return
 		}
 		if id, ok := attachTarget(strings.Split(strings.TrimRight(string(data), "\x00"), "\x00")); ok {
 			out[pid] = id
 		}
+	})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }

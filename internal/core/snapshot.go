@@ -58,10 +58,16 @@ func (c *Core) refresh(ctx context.Context) (snapshot, error) {
 	if err != nil {
 		return snapshot{}, err
 	}
-	// Without the attach clients, background sessions fall back to the
-	// attach sessions of the private server.
-	attached, attachErr := c.opts.ReadAttachments(ctx, c.opts.Run)
-	userComplete := attachErr == nil
+	// The attach clients only serve background sessions. Without them,
+	// background sessions fall back to the attach sessions of the private
+	// server.
+	var attached locate.Attachments
+	userComplete := true
+	if hasBackground(sessions) {
+		var attachErr error
+		attached, attachErr = c.opts.ReadAttachments(ctx, c.opts.Run)
+		userComplete = attachErr == nil
+	}
 	var panes []tmux.Pane
 	clients := map[string][]tmux.Client{}
 	privateOK, privateGone := false, false
@@ -115,8 +121,10 @@ func (c *Core) refresh(ctx context.Context) (snapshot, error) {
 	return snap, nil
 }
 
-// readServers queries every server in parallel. A server that fails, such as
-// an orphaned socket, is reported as not ok.
+// readServers queries every server in parallel, and the panes and the clients
+// of one server in parallel too. A server that fails, such as an orphaned
+// socket, is reported as not ok; its panes error takes precedence over its
+// clients error.
 func (c *Core) readServers(ctx context.Context, servers []tmux.Server) []serverState {
 	states := make([]serverState, len(servers))
 	var wg sync.WaitGroup
@@ -124,12 +132,18 @@ func (c *Core) readServers(ctx context.Context, servers []tmux.Server) []serverS
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			var clients []tmux.Client
+			var clientsErr error
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				clients, clientsErr = srv.Clients(ctx)
+			}()
 			panes, err := srv.Panes(ctx)
-			if err != nil {
-				states[i] = serverState{socket: srv.Socket, err: err}
-				return
+			<-done
+			if err == nil {
+				err = clientsErr
 			}
-			clients, err := srv.Clients(ctx)
 			if err != nil {
 				states[i] = serverState{socket: srv.Socket, err: err}
 				return

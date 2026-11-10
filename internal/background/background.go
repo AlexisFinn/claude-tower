@@ -97,7 +97,8 @@ type Tracker struct {
 	agents  map[string]time.Time
 	shells  map[string]time.Time
 	ended   map[string]struct{}
-	endedQ  []string
+	endedQ  []string // ring of the ended ids, in order of arrival once full
+	endedAt int      // index of the oldest id of endedQ once it is full
 }
 
 // NewTracker returns an empty Tracker.
@@ -110,7 +111,7 @@ func (t *Tracker) reset() {
 	clear(t.agents)
 	clear(t.shells)
 	clear(t.ended)
-	t.endedQ = t.endedQ[:0]
+	t.endedQ, t.endedAt = t.endedQ[:0], 0
 }
 
 // Update reads what the transcript at path gained since the last call. A
@@ -263,12 +264,14 @@ func (t *Tracker) remember(id string) {
 	if _, ok := t.ended[id]; ok {
 		return
 	}
-	if len(t.endedQ) >= maxEnded {
-		delete(t.ended, t.endedQ[0])
-		t.endedQ = append(t.endedQ[:0], t.endedQ[1:]...)
+	if len(t.endedQ) < maxEnded {
+		t.endedQ = append(t.endedQ, id)
+	} else {
+		delete(t.ended, t.endedQ[t.endedAt])
+		t.endedQ[t.endedAt] = id
+		t.endedAt = (t.endedAt + 1) % maxEnded
 	}
 	t.ended[id] = struct{}{}
-	t.endedQ = append(t.endedQ, id)
 }
 
 func (t *Tracker) applyResult(res toolResult, ts time.Time) {

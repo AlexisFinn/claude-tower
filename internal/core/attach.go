@@ -28,6 +28,16 @@ func isBackground(s registry.Session) bool {
 	return s.Kind == "bg" || s.Kind == "background"
 }
 
+// hasBackground reports whether any of the sessions runs in the background.
+func hasBackground(sessions []registry.Session) bool {
+	for _, s := range sessions {
+		if isBackground(s) {
+			return true
+		}
+	}
+	return false
+}
+
 // backgroundID returns the short id that `claude attach` and `claude stop`
 // take: the first eight characters of the session ID.
 func backgroundID(s registry.Session) string {

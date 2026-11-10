@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -33,7 +34,9 @@ func TestPromptPastes(t *testing.T) {
 		t.Fatal(err)
 	}
 	words := e.fake.commandNames(e.userSock)
-	want := []string{"list-panes", "list-clients", "list-panes", "if-shell", "load-buffer", "paste-buffer", "send-keys"}
+	// The refresh lists the panes and the clients of a server concurrently.
+	sort.Strings(words[:2])
+	want := []string{"list-clients", "list-panes", "list-panes", "if-shell", "load-buffer", "paste-buffer", "send-keys"}
 	if !reflect.DeepEqual(words, want) {
 		t.Errorf("commands: %v want %v", words, want)
 	}
