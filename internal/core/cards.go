@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"claude-tower/internal/registry"
+	"claude-tower/internal/titles"
 	"claude-tower/internal/tmux"
 	"claude-tower/internal/view"
 )
@@ -12,6 +13,7 @@ import (
 type Card struct {
 	PID, Order   int // Order is the index in start time, then PID order
 	Name         string
+	Title        string // name chosen by the user, else generated title, else empty
 	State        string // "waiting", "busy", "background", "idle" or "unknown"
 	Label        string
 	Since        string
@@ -37,6 +39,7 @@ func (c *Core) Cards(ctx context.Context) ([]Card, error) {
 		return nil, err
 	}
 	now := c.opts.Now()
+	c.syncTitles(snap.sessions)
 	cards := make([]Card, 0, len(snap.sessions))
 	for i, s := range snap.sessions {
 		act := c.finder.Last(s.SessionID)
@@ -47,6 +50,7 @@ func (c *Core) Cards(ctx context.Context) ([]Card, error) {
 			PID:      s.PID,
 			Order:    i,
 			Name:     view.DisplayName(s),
+			Title:    c.title(s),
 			State:    stateName(view.DisplayOf(s)),
 			Label:    view.Label(s),
 			Since:    view.Duration(s.StatusSince, now),
@@ -72,6 +76,30 @@ func (c *Core) Cards(ctx context.Context) ([]Card, error) {
 	}
 	c.syncAttachments(snap)
 	return cards, nil
+}
+
+// syncTitles tells the title store which sessions exist.
+func (c *Core) syncTitles(sessions []registry.Session) {
+	if c.opts.Titles == nil {
+		return
+	}
+	ids := make([]string, 0, len(sessions))
+	for _, s := range sessions {
+		ids = append(ids, s.SessionID)
+	}
+	c.opts.Titles.Sync(ids)
+}
+
+// title returns the name the user chose for the session, else its generated
+// title, else "". It never waits for a generation.
+func (c *Core) title(s registry.Session) string {
+	if !titles.IsDefaultName(s.Name, s.Cwd) {
+		return s.Name
+	}
+	if c.opts.Titles == nil || s.SessionID == "" {
+		return ""
+	}
+	return c.opts.Titles.Title(s.SessionID, c.finder.Path(s.SessionID))
 }
 
 func stateName(d view.Display) string {

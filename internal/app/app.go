@@ -12,6 +12,7 @@ import (
 	"claude-tower/internal/core"
 	"claude-tower/internal/hosting"
 	"claude-tower/internal/ptyterm"
+	"claude-tower/internal/titles"
 	"claude-tower/internal/tmux"
 )
 
@@ -48,7 +49,7 @@ type Engine interface {
 	Screen(ctx context.Context, pid, maxLines int) (core.Screen, error)
 	Prompt(ctx context.Context, pid int, text string) error
 	Focus(ctx context.Context, pid int) (core.FocusResult, error)
-	NewSession(ctx context.Context, dir string) error
+	NewSession(ctx context.Context, dir, name string) error
 	Kill(ctx context.Context, pid int) error
 	Fit(ctx context.Context, pid, cols, rows int) (bool, error)
 	PaneOf(pid int) (tmux.Pane, bool)
@@ -105,7 +106,7 @@ func (a *App) start() {
 	rctx, rcancel := context.WithTimeout(ctx, resolveTimeout)
 	h.ResolveClaudeConfigDir(rctx)
 	rcancel()
-	c, err := core.New(core.Options{Hosting: h})
+	c, err := core.New(core.Options{Hosting: h, Titles: titles.New(titles.Options{Claude: h.ClaudePath, Env: h.NewSessionEnv})})
 	if err != nil {
 		a.startErr = err
 		return
@@ -268,9 +269,10 @@ func (a *App) FitSession(pid, cols, rows int) (bool, error) {
 	return e.Fit(ctx, pid, cols, rows)
 }
 
-// NewSession asks for a directory and starts a session there. Cancelling the
-// dialog starts nothing and is not an error.
-func (a *App) NewSession() error {
+// NewSession asks for a directory and starts a session there, with the given
+// name unless it is empty. Cancelling the dialog starts nothing and is not an
+// error.
+func (a *App) NewSession(name string) error {
 	e, err := a.ready()
 	if err != nil {
 		return err
@@ -281,7 +283,7 @@ func (a *App) NewSession() error {
 	}
 	ctx, cancel := callContext()
 	defer cancel()
-	return e.NewSession(ctx, dir)
+	return e.NewSession(ctx, dir, name)
 }
 
 // ChooseFiles asks for files to attach to a message and returns their absolute

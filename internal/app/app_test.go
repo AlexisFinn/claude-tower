@@ -13,6 +13,7 @@ import (
 
 type fakeEngine struct {
 	newSessions []string
+	newNames    []string
 	cards       []core.Card
 }
 
@@ -24,8 +25,9 @@ func (f *fakeEngine) Prompt(context.Context, int, string) error { return nil }
 func (f *fakeEngine) Focus(context.Context, int) (core.FocusResult, error) {
 	return core.FocusResult{}, nil
 }
-func (f *fakeEngine) NewSession(_ context.Context, dir string) error {
+func (f *fakeEngine) NewSession(_ context.Context, dir, name string) error {
 	f.newSessions = append(f.newSessions, dir)
+	f.newNames = append(f.newNames, name)
 	return nil
 }
 func (f *fakeEngine) Kill(context.Context, int) error                  { return nil }
@@ -59,18 +61,21 @@ func started(e Engine, d Dialogs) *App {
 func TestNewSessionStartsInChosenDirectory(t *testing.T) {
 	e := &fakeEngine{}
 	a := started(e, fakeDialogs{dir: "/work/x"})
-	if err := a.NewSession(); err != nil {
+	if err := a.NewSession("mon nom"); err != nil {
 		t.Fatal(err)
 	}
 	if len(e.newSessions) != 1 || e.newSessions[0] != "/work/x" {
 		t.Errorf("sessions started: %v", e.newSessions)
+	}
+	if len(e.newNames) != 1 || e.newNames[0] != "mon nom" {
+		t.Errorf("names given: %v", e.newNames)
 	}
 }
 
 func TestNewSessionCancelledStartsNothing(t *testing.T) {
 	e := &fakeEngine{}
 	a := started(e, fakeDialogs{})
-	if err := a.NewSession(); err != nil {
+	if err := a.NewSession(""); err != nil {
 		t.Fatalf("cancelling is not an error: %v", err)
 	}
 	if len(e.newSessions) != 0 {
@@ -109,7 +114,7 @@ func TestNewSessionDialogErrorStartsNothing(t *testing.T) {
 	e := &fakeEngine{}
 	boom := errors.New("boom")
 	a := started(e, fakeDialogs{dir: "/work/x", err: boom})
-	if err := a.NewSession(); !errors.Is(err, boom) {
+	if err := a.NewSession(""); !errors.Is(err, boom) {
 		t.Fatalf("got %v", err)
 	}
 	if len(e.newSessions) != 0 {
@@ -127,7 +132,7 @@ func TestMethodsFailWithStartupError(t *testing.T) {
 	if _, err := a.Cards(); err == nil {
 		t.Error("Cards succeeded")
 	}
-	if err := a.NewSession(); err == nil {
+	if err := a.NewSession(""); err == nil {
 		t.Error("NewSession succeeded")
 	}
 	if _, err := a.OpenTerminal(1, 80, 24); err == nil {

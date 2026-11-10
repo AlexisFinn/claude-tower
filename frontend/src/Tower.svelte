@@ -7,10 +7,12 @@
   import Dialog from './Dialog.svelte'
   import EmptyState from './EmptyState.svelte'
   import Fullscreen from './Fullscreen.svelte'
+  import NewSessionDialog from './NewSessionDialog.svelte'
   import PromptBar from './PromptBar.svelte'
   import ShortcutsDialog from './ShortcutsDialog.svelte'
   import Toasts from './Toasts.svelte'
   import type { GridSize } from './lib/bodySize'
+  import { displayName } from './lib/displayName'
   import { errorMessage } from './lib/errors'
   import { routeKey, type KeyTarget } from './lib/keyRouting'
   import type { GridAction } from './lib/keys'
@@ -39,6 +41,7 @@
   let confirmKill = $state<core.Card | null>(null)
   let unavailable = $state.raw<Set<number>>(new Set())
   let helpOpen = $state(false)
+  let newSessionOpen = $state(false)
   let loaded = $state(false)
   let toasts = $state.raw<Toast[]>([])
   let areaWidth = $state(0)
@@ -227,9 +230,14 @@
     }
   }
 
-  async function newSession(): Promise<void> {
+  function newSession(): void {
+    newSessionOpen = true
+  }
+
+  async function startSession(name: string): Promise<void> {
+    newSessionOpen = false
     try {
-      await NewSession()
+      await NewSession(name)
       refresher.kick()
     } catch (e) {
       notify('error', errorMessage(e))
@@ -295,7 +303,7 @@
         promptBar.focus()
         break
       case 'new':
-        void newSession()
+        newSession()
         break
       case 'kill':
         askKill(selectedCard)
@@ -318,7 +326,7 @@
       return
     }
     const route = routeKey(
-      { fullscreen: fullscreen !== null, confirmKill: confirmKill !== null, help: helpOpen },
+      { fullscreen: fullscreen !== null, confirmKill: confirmKill !== null, newSession: newSessionOpen, help: helpOpen },
       e,
       keyTarget(e.target),
     )
@@ -327,6 +335,8 @@
     if (route.layer === 'confirm') {
       if (route.action === 'accept') void killConfirmed()
       else confirmKill = null
+    } else if (route.layer === 'newSession') {
+      newSessionOpen = false
     } else if (route.layer === 'help') {
       helpOpen = false
     } else {
@@ -349,13 +359,13 @@
 <svelte:window onkeydown={onKeydown} onclickcapture={releaseMouseFocus} />
 
 <div class="tower">
-  <AppBar {summary} onHelp={() => (helpOpen = true)} onNew={() => void newSession()} />
+  <AppBar {summary} onHelp={() => (helpOpen = true)} onNew={newSession} />
 
   <div class="main">
     <div class="area" bind:clientWidth={areaWidth} bind:clientHeight={areaHeight}>
       {#if cards.length === 0}
         {#if loaded}
-          <EmptyState onNew={() => void newSession()} />
+          <EmptyState onNew={newSession} />
         {/if}
       {:else}
         <div class="canvas" style:height="{placed.scrolls ? placed.contentHeight : gridHeight}px">
@@ -388,7 +398,7 @@
   <PromptBar
     bind:this={promptBar}
     card={selectedCard}
-    dropBlocked={fullscreen !== null || helpOpen || confirmKill !== null}
+    dropBlocked={fullscreen !== null || helpOpen || confirmKill !== null || newSessionOpen}
     onSent={() => {
       typing.end()
       refresher.kick()
@@ -405,14 +415,18 @@
     <ShortcutsDialog onClose={() => (helpOpen = false)} />
   {/if}
 
+  {#if newSessionOpen}
+    <NewSessionDialog onSubmit={(name) => void startSession(name)} onClose={() => (newSessionOpen = false)} />
+  {/if}
+
   {#if confirmKill !== null}
     <Dialog title="Arrêter la session" role="alertdialog" onClose={() => (confirmKill = null)}>
       <p class="confirm">
         {#if confirmKill.Detached}
-          Arrêter la session d’arrière-plan <strong>{confirmKill.Name}</strong> ? Sa conversation est
+          Arrêter la session d’arrière-plan <strong>{displayName(confirmKill)}</strong> ? Sa conversation est
           conservée : <code>claude --resume</code> la retrouve.
         {:else}
-          Arrêter la session <strong>{confirmKill.Name}</strong> (PID {confirmKill.PID}) ? Le processus sera
+          Arrêter la session <strong>{displayName(confirmKill)}</strong> (PID {confirmKill.PID}) ? Le processus sera
           interrompu.
         {/if}
       </p>

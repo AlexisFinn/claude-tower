@@ -4,6 +4,7 @@ import { gridKeyAction, type GridAction, type KeyLike } from './keys'
 export interface KeyLayers {
   fullscreen: boolean
   confirmKill: boolean
+  newSession: boolean
   help: boolean
 }
 
@@ -13,6 +14,7 @@ export type KeyTarget = 'text' | 'button' | 'other'
 /** The layer that handles a key press and what it does with it. */
 export type KeyRoute =
   | { layer: 'confirm'; action: 'accept' | 'cancel' }
+  | { layer: 'newSession'; action: 'cancel' }
   | { layer: 'help'; action: 'close' }
   | { layer: 'grid'; action: GridAction }
 
@@ -31,6 +33,7 @@ export function routeKey(layers: KeyLayers, e: KeyLike, target: KeyTarget): KeyR
     if (e.key === 'Escape' || e.key === 'n') return { layer: 'confirm', action: 'cancel' }
     return null
   }
+  if (layers.newSession) return !modified && e.key === 'Escape' ? { layer: 'newSession', action: 'cancel' } : null
   if (layers.help) return !modified && (e.key === 'Escape' || e.key === '?') ? { layer: 'help', action: 'close' } : null
   if (target === 'text') return null
   if (target === 'button' && e.key === 'Enter') return null

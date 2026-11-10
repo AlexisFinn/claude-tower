@@ -443,3 +443,58 @@ func TestStopBackground(t *testing.T) {
 		t.Errorf("env file: %q %v", data, err)
 	}
 }
+
+func TestCleanName(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"refonte export", "refonte export"},
+		{"  refonte  ", "refonte"},
+		{"a\x00b\tc\nd\x1b[0m", "abcd[0m"},
+		{"\n \t", ""},
+		{strings.Repeat("é", 70), strings.Repeat("é", 60)},
+		{strings.Repeat("a", 59) + " " + strings.Repeat("b", 5), strings.Repeat("a", 59)},
+		{`il dit "oui" et 'non' $HOME; rm -rf /`, `il dit "oui" et 'non' $HOME; rm -rf /`},
+	}
+	for _, tt := range tests {
+		if got := CleanName(tt.in); got != tt.want {
+			t.Errorf("CleanName(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestNameArgs(t *testing.T) {
+	if got := NameArgs(" \n"); got != nil {
+		t.Errorf("empty name: %q", got)
+	}
+	if got, want := NameArgs(" mon nom "), []string{"-n", "mon nom"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestNewSessionNameStaysOneArgument(t *testing.T) {
+	rec := sessionRecorder(0)
+	h := newHosting(t, rec)
+	claude := writeExecutable(t, t.TempDir(), "claude")
+	writeConfig(t, h, fmt.Sprintf(`{"claudeCommand":[%q]}`, claude))
+	name := `mon "nom" d'essai $(x)`
+	if _, err := h.NewSession(context.Background(), "/work/proj", NameArgs(name), []string{"PATH=/bin"}); err != nil {
+		t.Fatal(err)
+	}
+	call := newSessionCall(rec)
+	i := indexOf(call, "exec-env")
+	if i < 0 || !reflect.DeepEqual(call[i+3:], []string{claude, "-n", name}) {
+		t.Errorf("command: %q", call)
+	}
+}
+
+func TestClaudePath(t *testing.T) {
+	bin := t.TempDir()
+	onPath := writeExecutable(t, bin, "claude")
+	h := newHosting(t, &recorder{})
+	writeConfig(t, h, `{"claudeCommand":["claude","--base"]}`)
+	if got, err := h.ClaudePath(context.Background(), []string{"PATH=" + bin}); err != nil || got != onPath {
+		t.Errorf("got %q, %v", got, err)
+	}
+	if _, err := h.ClaudePath(context.Background(), []string{"PATH=/none"}); err == nil {
+		t.Error("missing claude accepted")
+	}
+}

@@ -16,6 +16,7 @@ import (
 	"claude-tower/internal/hosting"
 	"claude-tower/internal/locate"
 	"claude-tower/internal/registry"
+	"claude-tower/internal/titles"
 	"claude-tower/internal/tmux"
 	"claude-tower/internal/transcript"
 )
@@ -29,6 +30,9 @@ type Options struct {
 	// Hosting runs and stops the sessions of the private server. Without it,
 	// there is no private server and NewSession and Kill fail.
 	Hosting *hosting.Hosting
+	// Titles generates the titles of the sessions Claude Code named by
+	// default. Without it, such sessions have no title.
+	Titles *titles.Store
 	// Home shortens the paths shown. Default: the user's home directory.
 	Home string
 	// UserSocketDir holds the sockets of the user's tmux servers. Default:

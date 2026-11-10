@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { KeyLike } from './keys'
 import { routeKey, type KeyLayers } from './keyRouting'
 
-const GRID: KeyLayers = { fullscreen: false, confirmKill: false, help: false }
+const GRID: KeyLayers = { fullscreen: false, confirmKill: false, newSession: false, help: false }
 
 function key(k: string, mods: Partial<KeyLike> = {}): KeyLike {
   return { key: k, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, ...mods }
@@ -39,7 +39,7 @@ describe('routeKey under a layer', () => {
   })
 
   it('full screen wins over the dialogs', () => {
-    expect(routeKey({ fullscreen: true, confirmKill: true, help: true }, key('y'), 'other')).toBeNull()
+    expect(routeKey({ ...GRID, fullscreen: true, confirmKill: true, help: true }, key('y'), 'other')).toBeNull()
   })
 
   it('never lets a grid key act under the kill dialog', () => {
@@ -73,14 +73,27 @@ describe('routeKey under a layer', () => {
     }
   })
 
+  it('cancels the new session dialog on Escape only, whatever has the focus', () => {
+    const layers = { ...GRID, newSession: true }
+    for (const target of ['text', 'button', 'other'] as const) {
+      expect(routeKey(layers, key('Escape'), target)).toEqual({ layer: 'newSession', action: 'cancel' })
+      for (const k of [...GRID_KEYS, 'y']) expect(routeKey(layers, key(k), target)).toBeNull()
+    }
+    expect(routeKey(layers, key('Escape', { ctrlKey: true }), 'text')).toBeNull()
+  })
+
+  it('full screen wins over the new session dialog', () => {
+    expect(routeKey({ ...GRID, fullscreen: true, newSession: true }, key('Escape'), 'text')).toBeNull()
+  })
+
   it('the kill dialog wins over the help', () => {
-    expect(routeKey({ fullscreen: false, confirmKill: true, help: true }, key('?'), 'other')).toBeNull()
+    expect(routeKey({ ...GRID, confirmKill: true, help: true }, key('?'), 'other')).toBeNull()
   })
 })
 
 describe('routeKey with modifiers on dialogs', () => {
-  const CONFIRM: KeyLayers = { fullscreen: false, confirmKill: true, help: false }
-  const HELP: KeyLayers = { fullscreen: false, confirmKill: false, help: true }
+  const CONFIRM: KeyLayers = { ...GRID, confirmKill: true }
+  const HELP: KeyLayers = { ...GRID, help: true }
 
   it('never accepts the stop confirmation with a modified key', () => {
     for (const mods of [{ ctrlKey: true }, { altKey: true }, { metaKey: true }]) {

@@ -276,7 +276,7 @@ func startSession(t *testing.T, e *env) string {
 	t.Helper()
 	claude := prepareClaude(t, e)
 	e.fake.panes[e.privSock] = paneLine("%5", 77, "$3", "proj", "@3", "")
-	if err := e.core().NewSession(context.Background(), "/work/proj"); err != nil {
+	if err := e.core().NewSession(context.Background(), "/work/proj", ""); err != nil {
 		t.Fatal(err)
 	}
 	var command []string
@@ -369,7 +369,7 @@ func indexOf(list []string, want string) int {
 func TestNewSessionNeedsHosting(t *testing.T) {
 	e := newEnv(t)
 	c := e.core(func(o *Options) { o.Hosting = nil })
-	if err := c.NewSession(context.Background(), "/x"); err == nil || !strings.Contains(err.Error(), "hébergement") {
+	if err := c.NewSession(context.Background(), "/x", ""); err == nil || !strings.Contains(err.Error(), "hébergement") {
 		t.Errorf("err=%v", err)
 	}
 }
@@ -431,5 +431,39 @@ func TestKillStopsViewSessionsCreatedAfterTheSnapshot(t *testing.T) {
 	want := [][]string{{"kill-session", "-t", "$20"}, {"kill-session", "-t", "$7"}}
 	if !reflect.DeepEqual(kills, want) {
 		t.Errorf("kills %v want %v", kills, want)
+	}
+}
+
+func TestNewSessionNameBecomesNameArgument(t *testing.T) {
+	tests := []struct {
+		name string
+		want []string
+	}{
+		{"", nil},
+		{" \t ", nil},
+		{`mon "nom" d'essai`, []string{"-n", `mon "nom" d'essai`}},
+		{"  avec espaces\n", []string{"-n", "avec espaces"}},
+		{strings.Repeat("x", 80), []string{"-n", strings.Repeat("x", 60)}},
+	}
+	for _, tt := range tests {
+		e := newEnv(t)
+		claude := prepareClaude(t, e)
+		e.fake.panes[e.privSock] = paneLine("%5", 77, "$3", "proj", "@3", "")
+		if err := e.core().NewSession(context.Background(), "/work/proj", tt.name); err != nil {
+			t.Fatal(err)
+		}
+		var command []string
+		for _, cmd := range e.fake.commands(e.privSock) {
+			if cmd[0] == "-f" {
+				command = cmd
+			}
+		}
+		i := indexOf(command, "exec-env")
+		if i < 0 {
+			t.Fatalf("%q: no session started: %v", tt.name, e.fake.calls)
+		}
+		if got := command[i+3:]; !reflect.DeepEqual(got, append([]string{claude}, tt.want...)) {
+			t.Errorf("%q: command %q", tt.name, got)
+		}
 	}
 }

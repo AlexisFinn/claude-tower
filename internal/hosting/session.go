@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"claude-tower/internal/tmux"
 )
@@ -58,6 +59,16 @@ func (h *Hosting) resolveClaude(ctx context.Context, env []string) ([]string, er
 		return nil, fmt.Errorf("claude introuvable : réglez claudeCommand dans %s", cfgPath)
 	}
 	return append([]string{path}, extra...), nil
+}
+
+// ClaudePath returns the absolute path of the claude executable, found as a
+// session would find it with env as its environment.
+func (h *Hosting) ClaudePath(ctx context.Context, env []string) (string, error) {
+	argv, err := h.resolveClaude(ctx, env)
+	if err != nil {
+		return "", err
+	}
+	return argv[0], nil
 }
 
 func (h *Hosting) lookupClaude(ctx context.Context, name string, env []string) (string, bool) {
@@ -151,6 +162,34 @@ func (h *Hosting) StopBackground(ctx context.Context, id string, env []string) e
 		return fmt.Errorf("claude stop %s : %w %s", id, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// maxNameRunes is the length of the longest name given to a new session.
+const maxNameRunes = 60
+
+// CleanName returns name without control characters nor surrounding spaces,
+// cut to maxNameRunes characters.
+func CleanName(name string) string {
+	name = strings.TrimSpace(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, name))
+	if r := []rune(name); len(r) > maxNameRunes {
+		name = strings.TrimSpace(string(r[:maxNameRunes]))
+	}
+	return name
+}
+
+// NameArgs returns the arguments that give a new session its name, none when
+// the cleaned name is empty. The name stays one argument: the command is not
+// parsed by a shell.
+func NameArgs(name string) []string {
+	if name = CleanName(name); name == "" {
+		return nil
+	}
+	return []string{"-n", name}
 }
 
 // NewSession starts Claude Code with args in a new session of the private

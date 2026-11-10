@@ -26,8 +26,8 @@ export function Kill(arg1) {
   return window['go']['app']['App']['Kill'](arg1);
 }
 
-export function NewSession() {
-  return window['go']['app']['App']['NewSession']();
+export function NewSession(arg1) {
+  return window['go']['app']['App']['NewSession'](arg1);
 }
 
 export function OpenTerminal(arg1, arg2, arg3) {

@@ -14,7 +14,7 @@ export function Focus(arg1:number):Promise<core.FocusResult>;
 
 export function Kill(arg1:number):Promise<void>;
 
-export function NewSession():Promise<void>;
+export function NewSession(arg1:string):Promise<void>;
 
 export function OpenTerminal(arg1:number,arg2:number,arg3:number):Promise<number>;
 

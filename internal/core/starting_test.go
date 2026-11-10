@@ -82,7 +82,7 @@ func TestStartFailureReportsLastLines(t *testing.T) {
 	e.fake.panes[e.privSock] = paneLine("%5", 77, "$3", "proj", "@3", "")
 	e.fake.capture["%5"] = "Welcome\n\x1b[31mError: config missing\x1b[0m\n\n"
 	c := e.core()
-	if err := c.NewSession(context.Background(), "/home/u/proj"); err != nil {
+	if err := c.NewSession(context.Background(), "/home/u/proj", ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.Cards(context.Background()); err != nil {
@@ -116,7 +116,7 @@ func TestStartFailureWhenPrivateServerStops(t *testing.T) {
 	prepareClaude(t, e)
 	e.fake.panes[e.privSock] = paneLine("%5", 77, "$3", "proj", "@3", "")
 	c := e.core()
-	if err := c.NewSession(context.Background(), "/home/u/proj"); err != nil {
+	if err := c.NewSession(context.Background(), "/home/u/proj", ""); err != nil {
 		t.Fatal(err)
 	}
 	e.fake.failing[e.privSock] = true
@@ -133,7 +133,7 @@ func TestRegisteredLaunchIsNotAFailure(t *testing.T) {
 	prepareClaude(t, e)
 	e.fake.panes[e.privSock] = paneLine("%5", 77, "$3", "proj", "@3", "")
 	c := e.core()
-	if err := c.NewSession(context.Background(), "/home/u/proj"); err != nil {
+	if err := c.NewSession(context.Background(), "/home/u/proj", ""); err != nil {
 		t.Fatal(err)
 	}
 	e.session(77, `"sessionId":"`+idA+`","name":"proj","startedAt":1000,"status":"idle"`)
@@ -155,7 +155,7 @@ func TestKilledLaunchIsNotAFailure(t *testing.T) {
 	prepareClaude(t, e)
 	e.fake.panes[e.privSock] = paneLine("%5", 77, "$3", "proj", "@3", "")
 	c := e.core()
-	if err := c.NewSession(context.Background(), "/home/u/proj"); err != nil {
+	if err := c.NewSession(context.Background(), "/home/u/proj", ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.Cards(context.Background()); err != nil {

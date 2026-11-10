@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"claude-tower/internal/hosting"
 	"claude-tower/internal/tmux"
 
 	"github.com/charmbracelet/x/ansi"
@@ -110,14 +111,15 @@ func hasPane(panes []tmux.Pane, id string) bool {
 	return false
 }
 
-// NewSession starts Claude Code in dir, in the private server.
-func (c *Core) NewSession(ctx context.Context, dir string) error {
+// NewSession starts Claude Code in dir, in the private server. A name that is
+// not empty once cleaned becomes the name of the session.
+func (c *Core) NewSession(ctx context.Context, dir, name string) error {
 	h := c.opts.Hosting
 	if h == nil {
 		return errors.New("hébergement indisponible")
 	}
 	env := h.NewSessionEnv(ctx)
-	pane, err := h.NewSession(ctx, dir, nil, env)
+	pane, err := h.NewSession(ctx, dir, hosting.NameArgs(name), env)
 	if err != nil {
 		return err
 	}

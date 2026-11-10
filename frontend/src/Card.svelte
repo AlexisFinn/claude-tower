@@ -8,6 +8,7 @@
   import { parseActivity } from './lib/activity'
   import { bodyGeometry, fitGrid, sameGeometry, type BodyGeometry, type GridSize } from './lib/bodySize'
   import { backgroundLabel, type BackgroundTasks } from './lib/cardText'
+  import { displayName, nameTag } from './lib/displayName'
   import { watchDevicePixelRatio } from './lib/devicePixelRatio'
   import { frameClass } from './lib/frame'
   import type { Rect } from './lib/layout'
@@ -71,6 +72,8 @@
     activity.kind === 'tool' ? 'zap' : activity.kind === 'prompt' ? 'arrowRight' : 'message',
   )
   const backgroundText = $derived(backgroundLabel(background))
+  const shownName = $derived(displayName(card))
+  const tagName = $derived(nameTag(card))
   const paneCols = $derived(screen && screen.Width > 0 ? screen.Width : null)
   const paneRows = $derived(screen && screen.Height > 0 ? screen.Height : null)
 
@@ -203,14 +206,15 @@
   style:width="{rect.width}px"
   style:height="{rect.height}px"
   role="group"
-  aria-label="{card.Name}, {card.Label}"
+  aria-label="{shownName}, {card.Label}"
   tabindex="-1"
   onclick={() => onSelect(card.PID)}
   ondblclick={() => onFocus(card.PID)}
 >
   <header>
     <div class="line">
-      <span class="name" title={card.Name}>{card.Name}</span>
+      <span class="name" title={shownName}>{shownName}</span>
+      {#if tagName !== ''}<span class="tag id" title={tagName}>{tagName}</span>{/if}
       <StatePill state={card.State} label={card.Label} />
       <div class="trail">
         <span class="since">{card.Since}</span>
@@ -418,6 +422,14 @@
     white-space: nowrap;
     border: 1px solid var(--border);
     border-radius: 999px;
+  }
+
+  .tag.id {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 8em;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .screen {
