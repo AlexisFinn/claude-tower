@@ -59,15 +59,19 @@ describe('composeMessage', () => {
   })
 
   it('puts the mentions after a blank line, separated by spaces', () => {
-    expect(composeMessage('lis ça', ['/a.txt', '/b c.txt'])).toBe('lis ça\n\n@/a.txt @"/b c.txt"')
+    expect(composeMessage('lis ça', ['/a.txt', '/b c.txt'])).toBe('lis ça\n\n@/a.txt @"/b c.txt" ')
   })
 
   it('does not stack blank lines when the text ends with newlines', () => {
-    expect(composeMessage('lis ça\n\n', ['/a.txt'])).toBe('lis ça\n\n@/a.txt')
+    expect(composeMessage('lis ça\n\n', ['/a.txt'])).toBe('lis ça\n\n@/a.txt ')
+  })
+
+  it('ends with a space, so that the file suggestions of Claude Code are closed when Enter submits', () => {
+    expect(composeMessage('lis ça', ['/a.txt']).endsWith(' ')).toBe(true)
   })
 
   it('sends only the mentions when there is no text', () => {
-    expect(composeMessage('', ['/a.txt'])).toBe('@/a.txt')
-    expect(composeMessage(' \n ', ['/a.txt', '/b.txt'])).toBe('@/a.txt @/b.txt')
+    expect(composeMessage('', ['/a.txt'])).toBe('@/a.txt ')
+    expect(composeMessage(' \n ', ['/a.txt', '/b.txt'])).toBe('@/a.txt @/b.txt ')
   })
 })

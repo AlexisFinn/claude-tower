@@ -28,9 +28,13 @@ export function fileName(path: string): string {
   return parts.length > 0 ? parts[parts.length - 1] : path
 }
 
-/** Returns the message to send: the text, then a blank line and the mentions of the files separated by spaces. Without text, only the mentions. */
+/**
+ * Returns the message to send: the text, then a blank line and the mentions of the files separated by spaces. Without text, only the mentions.
+ * A space follows the last mention: a message ending with a mention leaves the file suggestions of Claude Code open, and the Enter
+ * that submits it would pick a suggestion instead.
+ */
 export function composeMessage(text: string, files: readonly string[]): string {
   if (files.length === 0) return text
-  const mentions = files.map(mentionOf).join(' ')
+  const mentions = files.map(mentionOf).join(' ') + ' '
   return text.trim() === '' ? mentions : `${text.trimEnd()}\n\n${mentions}`
 }
