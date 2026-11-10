@@ -1,9 +1,3 @@
-<script module lang="ts">
-  import { measureFont, THUMBNAIL_FONT_FAMILY } from './lib/thumbnail'
-
-  // The font is the same in every card, so its cell size per pixel of font is measured once.
-  const cellRatio = measureFont(THUMBNAIL_FONT_FAMILY).cell
-</script>
 
 <script lang="ts">
   import { onMount, untrack } from 'svelte'
@@ -19,7 +13,8 @@
   import { frameClass } from './lib/frame'
   import type { Rect } from './lib/layout'
   import { screenSequence } from './lib/screenSequence'
-  import { createThumbnail, type Thumbnail } from './lib/thumbnail'
+  import { createThumbnail, measureFont, type Thumbnail } from './lib/thumbnail'
+  import type { ThumbnailStyle } from './lib/thumbnailStyle'
 
   interface Props {
     card: core.Card
@@ -28,6 +23,7 @@
     rect: Rect
     selected: boolean
     background?: BackgroundTasks
+    thumbnailStyle: ThumbnailStyle
     onSelect: (pid: number) => void
     onFocus: (pid: number) => void
     onFullscreen: (pid: number) => void
@@ -43,6 +39,7 @@
     rect,
     selected,
     background,
+    thumbnailStyle,
     onSelect,
     onFocus,
     onFullscreen,
@@ -61,10 +58,14 @@
   let dpr = $state(window.devicePixelRatio || 1)
   let lastContentKey = ''
   let lastPaintKey = ''
-  let current: { geometry: BodyGeometry; dpr: number } | null = null
+  let current: { geometry: BodyGeometry; dpr: number; subpixel: boolean } | null = null
 
   // The card object is replaced on every refresh: effects depend on these values instead.
   const pid = $derived(card.PID)
+  const family = $derived(thumbnailStyle.family)
+  const subpixel = $derived(thumbnailStyle.subpixel)
+  // measureFont caches by family, so every card shares one measure.
+  const cellRatio = $derived(measureFont(family).cell)
   const inTmux = $derived(card.InTmux)
   const activity = $derived(parseActivity(card.Activity))
   const activityIcon = $derived(
@@ -76,6 +77,7 @@
 
   $effect(() => {
     if (!inTmux || !canvas) return
+    const font = family
     const t = new Terminal({
       cols: 80,
       rows: 24,
@@ -88,7 +90,7 @@
     lastContentKey = ''
     lastPaintKey = ''
     term = t
-    thumbnail = createThumbnail(canvas)
+    thumbnail = createThumbnail(canvas, font)
     return () => {
       term = null
       thumbnail = null
@@ -123,19 +125,20 @@
   /** Draws the buffer with the latest geometry; a write still pending finishes by calling it again. */
   function paint(): void {
     if (!term || !thumbnail || !current) return
-    thumbnail.draw(term.buffer.active, current.geometry, current.dpr)
+    thumbnail.draw(term.buffer.active, current.geometry, current.dpr, current.subpixel)
   }
 
   $effect(() => {
     const t = term
     const g = geometry
     const ratio = dpr
+    const sub = subpixel
     if (!t || !g || !thumbnail || !screen) return
     const contentKey = `${screen.Hash}|${g.cols}x${g.rows}`
-    const paintKey = `${contentKey}|${g.font}|${ratio}`
+    const paintKey = `${contentKey}|${g.font}|${ratio}|${sub}`
     if (paintKey === lastPaintKey) return
     lastPaintKey = paintKey
-    current = { geometry: g, dpr: ratio }
+    current = { geometry: g, dpr: ratio, subpixel: sub }
     if (contentKey === lastContentKey) {
       paint()
       return

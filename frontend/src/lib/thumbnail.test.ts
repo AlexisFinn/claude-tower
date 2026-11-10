@@ -65,9 +65,9 @@ function show(lines: string[], rows: number): Promise<void> {
   return new Promise((resolve) => term.write(screenSequence(lines, rows), resolve))
 }
 
-function draw(thumbnail: ReturnType<typeof createThumbnail>, g: BodyGeometry, dpr = 1): void {
+function draw(thumbnail: ReturnType<typeof createThumbnail>, g: BodyGeometry, dpr = 1, subpixel = false): void {
   calls.length = 0
-  thumbnail.draw(term.buffer.active, g, dpr)
+  thumbnail.draw(term.buffer.active, g, dpr, subpixel)
 }
 
 function paintedRows(): number[] {
@@ -217,5 +217,34 @@ describe('createThumbnail', () => {
     const underlines = calls.filter((c) => c.name === 'fillRect' && (c.args[3] as number) < g.cellHeight / 2)
     expect(underlines).toHaveLength(2)
     expect(underlines.every((c) => c.fillStyle === '#585858')).toBe(true)
+  })
+})
+
+describe('createThumbnail with subpixel rendering', () => {
+  it('draws at the display resolution and folds every row onto the canvas', async () => {
+    await show(['hello', 'world'], 2)
+    const puts: { width: number; height: number; y: unknown }[] = []
+    const image = (width: number, height: number) => ({ width, height, data: new Uint8ClampedArray(width * height * 4) })
+    const wideCalls: Call[] = []
+    const wideCtx = fakeContext(wideCalls)
+    const wideCanvas = { width: 0, height: 0 }
+    ;(wideCtx as unknown as Record<string, unknown>).canvas = wideCanvas
+    ;(wideCtx as unknown as Record<string, unknown>).getImageData = (_x: number, _y: number, w: number, h: number) => image(w, h)
+    ;(globalThis as { document?: unknown }).document = {
+      createElement: () => ({ getContext: () => wideCtx }),
+    }
+    const mainCtx = fakeContext(calls)
+    ;(mainCtx as unknown as Record<string, unknown>).createImageData = image
+    ;(mainCtx as unknown as Record<string, unknown>).putImageData = (img: { width: number; height: number }, _x: number, y: number) =>
+      puts.push({ width: img.width, height: img.height, y })
+    const target = new FakeCanvas(mainCtx)
+    const g = geometry(2)
+    draw(createThumbnail(target as unknown as HTMLCanvasElement), g, 1, true)
+    expect(target.width).toBe(Math.round(g.cols * g.cellWidth))
+    expect(target.style.width).toBe(`${target.width}px`)
+    expect(puts).toHaveLength(2)
+    expect(puts.every((p) => p.width === target.width)).toBe(true)
+    expect(wideCanvas.width).toBe(3 * target.width)
+    expect(wideCalls.some((c) => c.name === 'setTransform' && c.args[0] === 3)).toBe(true)
   })
 })

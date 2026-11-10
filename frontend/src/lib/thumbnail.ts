@@ -5,6 +5,7 @@ import { changedRows } from './rowDiff'
 import { readRow, type BufferLike, type DrawCell, type Row } from './screenCells'
 import { DEFAULT_BG } from './termPalette'
 import { outlines, strokeWidth, textColor } from './thumbnailInk'
+import { foldSubpixels, SUBPIXELS } from './subpixel'
 import { canvasScale, cellBounds } from './thumbnailLayout'
 
 /** Font stack of the thumbnails. */
@@ -135,15 +136,27 @@ function paintRow(ctx: CanvasRenderingContext2D, row: Row, y: number, px: Pixels
   ctx.restore()
 }
 
+/** Shifts a canvas by less than a device pixel so that its top left corner falls on a whole device pixel. */
+function snapToDevicePixels(canvas: HTMLCanvasElement, dpr: number): void {
+  if (typeof canvas.getBoundingClientRect !== 'function') return
+  canvas.style.transform = ''
+  const r = canvas.getBoundingClientRect()
+  const dx = (Math.round(r.left * dpr) - r.left * dpr) / dpr
+  const dy = (Math.round(r.top * dpr) - r.top * dpr) / dpr
+  if (dx !== 0 || dy !== 0) canvas.style.transform = `translate(${dx}px, ${dy}px)`
+}
+
 /** Draws a terminal buffer into a canvas, redrawing only the rows that changed. */
 export interface Thumbnail {
   /**
    * Draws the first rows of the buffer for a geometry. The canvas is displayed
    * at the geometry size and its backing store is oversampled, so the browser
-   * downscales an image. Everything is redrawn when the geometry, the font or
-   * the device pixel ratio changed.
+   * downscales an image. With subpixel rendering, the backing store has the
+   * display resolution instead, and the canvas is shifted onto whole device
+   * pixels, which the color stripes need. Everything is redrawn when the
+   * geometry, the font, the device pixel ratio or the rendering changed.
    */
-  draw(buffer: BufferLike, geometry: BodyGeometry, dpr: number): void
+  draw(buffer: BufferLike, geometry: BodyGeometry, dpr: number, subpixel?: boolean): void
 }
 
 /** Creates a thumbnail that draws into a canvas with a font family. */
@@ -153,13 +166,37 @@ export function createThumbnail(canvas: HTMLCanvasElement, family: string = THUM
   let layoutKey = ''
   let signatures: string[] = []
   let cell: IBufferCell | undefined
+  let wide: CanvasRenderingContext2D | null = null
+
+  /** Paints a row three times wider into a scratch canvas, then folds it onto the color stripes of the canvas. */
+  function paintSubpixelRow(row: Row, y: number, px: Pixels): void {
+    if (!ctx) return
+    const [y0, y1] = cellBounds(y, px.cellHeight)
+    const height = y1 - y0
+    if (height <= 0) return
+    const width = px.width * SUBPIXELS
+    wide ??= document.createElement('canvas').getContext('2d', { alpha: false, willReadFrequently: true })
+    if (!wide) return
+    if (wide.canvas.width < width || wide.canvas.height < height) {
+      wide.canvas.width = Math.max(wide.canvas.width, width)
+      wide.canvas.height = Math.max(wide.canvas.height, height)
+    }
+    wide.setTransform(SUBPIXELS, 0, 0, 1, 0, -y0)
+    wide.textBaseline = 'alphabetic'
+    wide.textAlign = 'left'
+    paintRow(wide, row, y, px)
+    wide.setTransform(1, 0, 0, 1, 0, 0)
+    const src = wide.getImageData(0, 0, width, height)
+    const out = ctx.createImageData(px.width, height)
+    foldSubpixels(src.data, out.data, px.width, height)
+    ctx.putImageData(out, 0, y0)
+  }
 
   return {
-    draw(buffer, g, dpr) {
+    draw(buffer, g, dpr, subpixel = false) {
       if (!ctx) return
-      const cssWidth = g.cols * g.cellWidth
-      const cssHeight = g.rows * g.cellHeight
-      const scale = canvasScale(dpr, cssWidth, cssHeight)
+      const display = Math.max(1, Number.isFinite(dpr) ? dpr : 1)
+      const scale = subpixel ? display : canvasScale(dpr, g.cols * g.cellWidth, g.rows * g.cellHeight)
       const px: Pixels = {
         width: Math.max(1, Math.round(g.cols * g.cellWidth * scale)),
         cellWidth: g.cellWidth * scale,
@@ -169,22 +206,29 @@ export function createThumbnail(canvas: HTMLCanvasElement, family: string = THUM
         metrics,
       }
       const height = Math.max(1, Math.round(g.rows * px.cellHeight))
-      const key = `${px.width}x${height}|${g.cols}x${g.rows}|${px.font}`
+      const key = `${px.width}x${height}|${g.cols}x${g.rows}|${px.font}|${subpixel}`
       if (key !== layoutKey) {
         layoutKey = key
         canvas.width = px.width
         canvas.height = height
-        canvas.style.width = `${cssWidth}px`
-        canvas.style.height = `${cssHeight}px`
+        // With subpixel rendering, each backing pixel is displayed on exactly one
+        // device pixel, so the browser never resamples the color stripes.
+        canvas.style.width = subpixel ? `${px.width / display}px` : `${g.cols * g.cellWidth}px`
+        canvas.style.height = subpixel ? `${height / display}px` : `${g.rows * g.cellHeight}px`
         signatures = []
       }
+      if (subpixel) snapToDevicePixels(canvas, display)
+      else canvas.style.transform = ''
       cell ??= buffer.getNullCell()
       ctx.textBaseline = 'alphabetic'
       ctx.textAlign = 'left'
       const rows: Row[] = []
       for (let y = 0; y < g.rows; y++) rows.push(readRow(buffer.getLine(y), g.cols, cell))
       const next = rows.map((r) => r.signature)
-      for (const y of changedRows(signatures, next)) paintRow(ctx, rows[y], y, px)
+      for (const y of changedRows(signatures, next)) {
+        if (subpixel) paintSubpixelRow(rows[y], y, px)
+        else paintRow(ctx, rows[y], y, px)
+      }
       signatures = next
     },
   }

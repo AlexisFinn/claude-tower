@@ -23,6 +23,7 @@
   import { startFailureText } from './lib/startFailures'
   import { summarizeStates } from './lib/summary'
   import { createToasts, type Toast, type ToastKind } from './lib/toasts'
+  import { THUMBNAIL_STYLES, saveStyleIndex, savedStyleIndex } from './lib/thumbnailStyle'
   import { createTypingPause } from './lib/typingPause'
 
   let { warning }: { warning: string } = $props()
@@ -55,6 +56,16 @@
   const placed = $derived(layout(cards.length, gridWidth, gridHeight))
   const summary = $derived(summarizeStates(cards))
   const selectedCard = $derived(cards.find((c) => c.PID === selected) ?? null)
+
+  let styleIndex = $state(savedStyleIndex(window.localStorage))
+  const thumbnailStyle = $derived(THUMBNAIL_STYLES[styleIndex].style)
+
+  /** Switches the thumbnails to the next text style and names it. */
+  function nextThumbnailStyle(): void {
+    styleIndex = (styleIndex + 1) % THUMBNAIL_STYLES.length
+    saveStyleIndex(window.localStorage, styleIndex)
+    notify('info', `Miniatures : ${THUMBNAIL_STYLES[styleIndex].name} (F9 pour changer)`)
+  }
 
   function notify(kind: ToastKind, text: string): void {
     notifier.push(kind, text)
@@ -268,6 +279,11 @@
   }
 
   function onKeydown(e: KeyboardEvent): void {
+    if (fullscreen === null && e.key === 'F9' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+      e.preventDefault()
+      nextThumbnailStyle()
+      return
+    }
     const route = routeKey(
       { fullscreen: fullscreen !== null, confirmKill: confirmKill !== null, help: helpOpen },
       e,
@@ -315,6 +331,7 @@
               <Card
                 {card}
                 background={backgroundOf(card)}
+                {thumbnailStyle}
                 screen={screens[card.PID]}
                 unavailable={unavailable.has(card.PID)}
                 rect={insetRect(placed.rects[i], CARD_GAP / 2)}
