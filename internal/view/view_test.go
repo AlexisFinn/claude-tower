@@ -30,6 +30,25 @@ func TestDuration(t *testing.T) {
 	}
 }
 
+func TestFullName(t *testing.T) {
+	cases := []struct {
+		name string
+		s    registry.Session
+		want string
+	}{
+		{"name", registry.Session{Name: "api", Cwd: "/x/y"}, "api"},
+		{"cwd fallback", registry.Session{Cwd: "/home/a/zest"}, "zest"},
+		{"empty cwd", registry.Session{PID: 42}, "pid 42"},
+		{"control chars", registry.Session{Name: "a\x1b[0mb"}, "a[0mb"},
+		{"long name is kept", registry.Session{Name: strings.Repeat("é", 20)}, strings.Repeat("é", 20)},
+	}
+	for _, c := range cases {
+		if got := FullName(c.s); got != c.want {
+			t.Errorf("%s: got %q want %q", c.name, got, c.want)
+		}
+	}
+}
+
 func TestDisplayName(t *testing.T) {
 	cases := []struct {
 		name string

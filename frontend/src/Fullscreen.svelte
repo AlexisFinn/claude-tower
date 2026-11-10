@@ -9,7 +9,6 @@
   import { EventsOn } from '../wailsjs/runtime/runtime'
   import Icon from './Icon.svelte'
   import StatePill from './StatePill.svelte'
-  import { displayName } from './lib/displayName'
   import { errorMessage } from './lib/errors'
   import { terminalKeyAction } from './lib/keys'
   import { DEFAULT_BG, DEFAULT_FG } from './lib/termPalette'
@@ -140,7 +139,7 @@
       Retour à la grille
       <span class="keys"><kbd>Ctrl</kbd><kbd>Maj</kbd><kbd>Q</kbd></span>
     </button>
-    <span class="name">{displayName(card)}</span>
+    <span class="name">{card.Name}</span>
     <StatePill state={card.State} label={card.Label} />
     <span class="cwd"><Icon name="folder" size={14} /><span class="path">{card.Cwd}</span></span>
     {#if error !== ''}<span class="error">{error}</span>{/if}
@@ -182,8 +181,12 @@
   }
 
   .name {
+    min-width: 0;
+    overflow: hidden;
     font-size: 14px;
     font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .cwd {

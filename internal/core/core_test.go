@@ -69,6 +69,19 @@ func TestCardsOrderAndFields(t *testing.T) {
 	}
 }
 
+func TestCardNameIsTheFullName(t *testing.T) {
+	e := newEnv(t)
+	e.session(100, `"sessionId":"`+idA+`","name":"a-session-name-longer-than-sixteen","startedAt":1000,"status":"idle"`)
+	e.session(200, `"sessionId":"`+idB+`","cwd":"/home/u/proj","startedAt":2000,"status":"idle"`)
+	cards, err := e.core().Cards(context.Background())
+	if err != nil || len(cards) != 2 {
+		t.Fatalf("cards=%+v err=%v", cards, err)
+	}
+	if cards[0].Name != "a-session-name-longer-than-sixteen" || cards[1].Name != "proj" {
+		t.Errorf("names: %q %q", cards[0].Name, cards[1].Name)
+	}
+}
+
 func TestCardsIgnoreFailingServerAndKeepStableOrder(t *testing.T) {
 	e := newEnv(t)
 	e.session(100, `"sessionId":"`+idA+`","name":"alpha","startedAt":1000,"status":"idle"`)

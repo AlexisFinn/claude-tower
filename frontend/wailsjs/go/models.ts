@@ -4,7 +4,6 @@ export namespace core {
 	    PID: number;
 	    Order: number;
 	    Name: string;
-	    Title: string;
 	    State: string;
 	    Label: string;
 	    Since: string;
@@ -28,7 +27,6 @@ export namespace core {
 	        this.PID = source["PID"];
 	        this.Order = source["Order"];
 	        this.Name = source["Name"];
-	        this.Title = source["Title"];
 	        this.State = source["State"];
 	        this.Label = source["Label"];
 	        this.Since = source["Since"];

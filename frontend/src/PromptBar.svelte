@@ -5,7 +5,6 @@
   import type { core } from '../wailsjs/go/models'
   import Icon from './Icon.svelte'
   import { addFiles, composeMessage, fileName, removeFile } from './lib/attachments'
-  import { displayName } from './lib/displayName'
   import { errorMessage } from './lib/errors'
   import { INITIAL_HEIGHT_STATE, heightStateOf, needsHeightMeasure } from './lib/composerHeight'
   import { frameClass } from './lib/frame'
@@ -43,7 +42,7 @@
 
   const availability = $derived(promptAvailability(card, prompt))
   const locked = $derived(availability.disabled && availability.reason !== '')
-  const placeholder = $derived(card ? `Message pour ${displayName(card)}…` : 'Aucune session sélectionnée')
+  const placeholder = $derived(card ? `Message pour ${card.Name}…` : 'Aucune session sélectionnée')
 
   // The height is measured at most once per frame, and only when the text may have changed it.
   $effect(() => {
@@ -173,9 +172,9 @@
   {/if}
   <div class="bar" class:dropping={dragging}>
     {#if card}
-      <button class="target {frameClass(card.State, false)}" title="Afficher la carte de {displayName(card)}" onclick={onLocate}>
+      <button class="target {frameClass(card.State, false)}" title="Afficher la carte de {card.Name}" onclick={onLocate}>
         <span class="dot"></span>
-        <span class="name">{displayName(card)}</span>
+        <span class="name">{card.Name}</span>
       </button>
     {:else}
       <span class="target none">Aucune session</span>

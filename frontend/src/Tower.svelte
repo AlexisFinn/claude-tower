@@ -12,7 +12,6 @@
   import ShortcutsDialog from './ShortcutsDialog.svelte'
   import Toasts from './Toasts.svelte'
   import { sameSize, type GridSize } from './lib/bodySize'
-  import { displayName } from './lib/displayName'
   import { errorMessage } from './lib/errors'
   import { routeKey, type KeyTarget } from './lib/keyRouting'
   import type { GridAction } from './lib/keys'
@@ -469,10 +468,10 @@
     <Dialog title="Arrêter la session" role="alertdialog" onClose={() => (confirmKill = null)}>
       <p class="confirm">
         {#if confirmKill.Detached}
-          Arrêter la session d’arrière-plan <strong>{displayName(confirmKill)}</strong> ? Sa conversation est
+          Arrêter la session d’arrière-plan <strong>{confirmKill.Name}</strong> ? Sa conversation est
           conservée : <code>claude --resume</code> la retrouve.
         {:else}
-          Arrêter la session <strong>{displayName(confirmKill)}</strong> (PID {confirmKill.PID}) ? Le processus sera
+          Arrêter la session <strong>{confirmKill.Name}</strong> (PID {confirmKill.PID}) ? Le processus sera
           interrompu.
         {/if}
       </p>

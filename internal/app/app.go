@@ -12,7 +12,6 @@ import (
 	"claude-tower/internal/core"
 	"claude-tower/internal/hosting"
 	"claude-tower/internal/ptyterm"
-	"claude-tower/internal/titles"
 	"claude-tower/internal/tmux"
 )
 
@@ -98,7 +97,7 @@ func New(emit Emitter, dialogs Dialogs, environ []string) *App {
 }
 
 func newCore(h *hosting.Hosting) (Engine, error) {
-	c, err := core.New(core.Options{Hosting: h, Titles: titles.New(titles.Options{Claude: h.ClaudePath, Env: h.NewSessionEnv})})
+	c, err := core.New(core.Options{Hosting: h})
 	if err != nil {
 		return nil, err
 	}

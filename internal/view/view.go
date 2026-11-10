@@ -107,8 +107,9 @@ func Duration(since, now time.Time) string {
 	return fmt.Sprintf("%dj", int(d/(24*time.Hour)))
 }
 
-// DisplayName returns the name shown for a session, at most 16 columns wide.
-func DisplayName(s registry.Session) string {
+// FullName returns the complete name of a session: its name, else the base
+// name of its directory, else "pid N", without control characters.
+func FullName(s registry.Session) string {
 	name := s.Name
 	if name == "" {
 		name = "pid " + fmt.Sprint(s.PID)
@@ -118,13 +119,17 @@ func DisplayName(s registry.Session) string {
 			}
 		}
 	}
-	name = strings.Map(func(r rune) rune {
+	return strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
 			return -1
 		}
 		return r
 	}, name)
-	return ansi.Truncate(name, maxNameWidth, "…")
+}
+
+// DisplayName returns FullName cut to at most 16 columns.
+func DisplayName(s registry.Session) string {
+	return ansi.Truncate(FullName(s), maxNameWidth, "…")
 }
 
 // ShortPath replaces the home directory prefix of cwd with "~".
