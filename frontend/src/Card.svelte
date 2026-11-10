@@ -324,34 +324,23 @@
     flex: none;
     display: flex;
     align-items: center;
+    gap: 6px;
   }
 
   .since {
     font-size: 11.5px;
     color: var(--text-3);
     white-space: nowrap;
-    transition: opacity 120ms var(--ease);
   }
 
+  /* The buttons keep their place in the line while hidden, so that showing
+     them never covers the state pill or the duration. */
   .tools {
-    position: absolute;
-    top: 50%;
-    right: 0;
-    z-index: 1;
     display: flex;
     gap: 2px;
-    padding-left: 10px;
-    background: var(--surface);
-    box-shadow: -8px 0 8px var(--surface);
-    transform: translateY(-50%);
     opacity: 0;
     pointer-events: none;
     transition: opacity 120ms var(--ease);
-  }
-
-  .card:hover .since,
-  .card:has(.tools :focus-visible) .since {
-    opacity: 0;
   }
 
   .card:hover .tools,
