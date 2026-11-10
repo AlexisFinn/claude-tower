@@ -3,6 +3,7 @@ package hosting
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -97,9 +98,31 @@ func TestNewSystem(t *testing.T) {
 	if h.ClaudeConfigDir != filepath.Join(home, ".claude") || h.SocketDir == "" || h.ConfigDir == "" {
 		t.Errorf("%+v", h)
 	}
+	if h.SessionConfigDir != "" {
+		t.Errorf("default directory passed to sessions: %q", h.SessionConfigDir)
+	}
 	h, _ = NewSystem([]string{"HOME=" + home, "CLAUDE_CONFIG_DIR=/c"})
-	if h.ClaudeConfigDir != "/c" {
-		t.Errorf("env value ignored: %q", h.ClaudeConfigDir)
+	if h.ClaudeConfigDir != "/c" || h.SessionConfigDir != "/c" {
+		t.Errorf("env value ignored: %q %q", h.ClaudeConfigDir, h.SessionConfigDir)
+	}
+}
+
+func TestNewSystemPassesConfiguredClaudeDirToSessions(t *testing.T) {
+	home := t.TempDir()
+	cfgDir := DefaultConfigDir(runtime.GOOS, home)
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.json"), []byte(`{"claudeConfigDir":"/cfg"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h, _ := NewSystem([]string{"HOME=" + home})
+	if h.ClaudeConfigDir != "/cfg" || h.SessionConfigDir != "/cfg" {
+		t.Errorf("config.json value ignored: %q %q", h.ClaudeConfigDir, h.SessionConfigDir)
+	}
+	h, _ = NewSystem([]string{"HOME=" + home, "CLAUDE_CONFIG_DIR=/env"})
+	if h.ClaudeConfigDir != "/env" || h.SessionConfigDir != "/env" {
+		t.Errorf("environment does not override config.json: %q %q", h.ClaudeConfigDir, h.SessionConfigDir)
 	}
 }
 

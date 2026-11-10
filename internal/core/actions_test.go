@@ -303,6 +303,15 @@ func TestNewSessionUsesApplicationEnvironment(t *testing.T) {
 	}
 }
 
+func TestNewSessionKeepsClaudeDefaultConfigDir(t *testing.T) {
+	e := newEnv(t)
+	e.hosting.SessionConfigDir = ""
+	e.hosting.Env = []string{"TERM=xterm", "KEEP=1", "LANG=fr_FR.UTF-8"}
+	if got := startSession(t, e); strings.Contains(got, "CLAUDE_CONFIG_DIR") {
+		t.Errorf("CLAUDE_CONFIG_DIR set without configuration: %q", got)
+	}
+}
+
 func TestNewSessionCompletesEnvironmentWithLoginShellWhenNoTerminal(t *testing.T) {
 	e := newEnv(t)
 	e.hosting.Env = []string{"KEEP=1", "PATH=/app/bin", "LANG=C", "TMUX=/s,1,0"}

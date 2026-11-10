@@ -113,7 +113,7 @@ func (c *Core) NewSession(ctx context.Context, dir string) error {
 	if h == nil {
 		return errors.New("hébergement indisponible")
 	}
-	env := hosting.SessionEnv(hosting.WithUTF8Locale(h.AppEnv(ctx)), h.ClaudeConfigDir)
+	env := hosting.SessionEnv(hosting.WithUTF8Locale(h.AppEnv(ctx)), h.SessionConfigDir)
 	_, err := h.NewSession(ctx, dir, nil, env)
 	return err
 }

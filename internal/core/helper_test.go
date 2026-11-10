@@ -168,7 +168,7 @@ func newEnv(t *testing.T) *env {
 	listenUnix(t, e.privSock)
 	e.hosting = &hosting.Hosting{
 		SocketDir: privDir, ConfigDir: filepath.Join(root, "cfg"), Self: "/opt/claude-tower",
-		Tmux: e.fake.run, Bin: "tmux", Env: []string{"TERM=xterm", "KEEP=1"}, ClaudeConfigDir: "/app/claude",
+		Tmux: e.fake.run, Bin: "tmux", Env: []string{"TERM=xterm", "KEEP=1"}, ClaudeConfigDir: "/app/claude", SessionConfigDir: "/app/claude",
 		Shell: "/bin/fake-shell", ShellRun: e.fake.run,
 	}
 	return e

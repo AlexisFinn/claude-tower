@@ -28,17 +28,18 @@ const (
 // field can be replaced, so that tests never touch the real directories,
 // shell or environment. A Hosting must not be copied once used.
 type Hosting struct {
-	SocketDir       string                                      // directory of the private socket; default: PrivateSocketDir
-	ConfigDir       string                                      // directory of config.json and tmux.conf; default: DefaultConfigDir
-	Self            string                                      // path of the claude-tower binary run by exec-env
-	Tmux            tmux.Runner                                 // runs tmux and infocmp; default: tmux.DefaultRunner
-	Bin             string                                      // tmux binary; default: "tmux"
-	Env             []string                                    // environment of the calling process
-	ClaudeConfigDir string                                      // Claude Code configuration directory read by the application
-	Shell           string                                      // login shell; default: $SHELL from Env, then /bin/sh
-	ShellRun        tmux.Runner                                 // runs the login shell; default: a runner limited to 10 seconds
-	Exec            func(path string, argv, env []string) error // replaces the process; default: syscall.Exec
-	Cwd             func() (string, error)                      // default: os.Getwd
+	SocketDir        string                                      // directory of the private socket; default: PrivateSocketDir
+	ConfigDir        string                                      // directory of config.json and tmux.conf; default: DefaultConfigDir
+	Self             string                                      // path of the claude-tower binary run by exec-env
+	Tmux             tmux.Runner                                 // runs tmux and infocmp; default: tmux.DefaultRunner
+	Bin              string                                      // tmux binary; default: "tmux"
+	Env              []string                                    // environment of the calling process
+	ClaudeConfigDir  string                                      // Claude Code configuration directory read by the application
+	SessionConfigDir string                                      // CLAUDE_CONFIG_DIR given to new sessions; empty keeps Claude Code's default
+	Shell            string                                      // login shell; default: $SHELL from Env, then /bin/sh
+	ShellRun         tmux.Runner                                 // runs the login shell; default: a runner limited to 10 seconds
+	Exec             func(path string, argv, env []string) error // replaces the process; default: syscall.Exec
+	Cwd              func() (string, error)                      // default: os.Getwd
 
 	mu        sync.Mutex
 	loginEnv  []string
@@ -64,10 +65,13 @@ func NewSystem(environ []string) (*Hosting, error) {
 		Bin:       bin,
 		Env:       environ,
 	}
-	h.ClaudeConfigDir = envValue(environ, "CLAUDE_CONFIG_DIR")
-	if cfg, err := h.LoadConfig(); h.ClaudeConfigDir == "" && err == nil {
-		h.ClaudeConfigDir = cfg.ClaudeConfigDir
+	h.SessionConfigDir = envValue(environ, "CLAUDE_CONFIG_DIR")
+	if cfg, err := h.LoadConfig(); h.SessionConfigDir == "" && err == nil {
+		h.SessionConfigDir = cfg.ClaudeConfigDir
 	}
+	// Claude Code reads ~/.claude.json, not ~/.claude/.claude.json, only while
+	// CLAUDE_CONFIG_DIR is unset: the default directory is never passed on.
+	h.ClaudeConfigDir = h.SessionConfigDir
 	if h.ClaudeConfigDir == "" {
 		h.ClaudeConfigDir = filepath.Join(home, ".claude")
 	}
