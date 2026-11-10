@@ -164,11 +164,28 @@ describe('createThumbnail', () => {
     expect(paintedRows()).toHaveLength(3)
   })
 
-  it('outlines the glyphs it fills', async () => {
-    await show(lines, 5)
-    draw(createThumbnail(canvas as unknown as HTMLCanvasElement), geometry())
-    const filled = calls.filter((c) => c.name === 'fillText').length
-    expect(filled).toBeGreaterThan(0)
-    expect(calls.filter((c) => c.name === 'strokeText')).toHaveLength(filled)
+  it('outlines the text glyphs in their color, but neither the box drawing nor the wide glyphs', async () => {
+    await show(['\x1b[38;2;32;32;32mab\x1b[0m┌─世'], 1)
+    const strokes: { ch: unknown; color: unknown; width: unknown }[] = []
+    const ctx = fakeContext(calls)
+    const record = new Proxy(ctx, {
+      get(t, key: string) {
+        if (key === 'strokeText') return (ch: unknown) => strokes.push({ ch, color: t.strokeStyle, width: t.lineWidth })
+        return (t as unknown as Record<string, unknown>)[key]
+      },
+      set(t, key: string, value) {
+        ;(t as unknown as Record<string, unknown>)[key] = value
+        return true
+      },
+    })
+    const g = geometry(1)
+    draw(createThumbnail(new FakeCanvas(record) as unknown as HTMLCanvasElement), g)
+    expect(strokes.map((s) => s.ch)).toEqual(['a', 'b'])
+    expect(strokes.every((s) => s.color === '#585858' && typeof s.width === 'number' && s.width > 0)).toBe(true)
+    expect(calls.filter((c) => c.name === 'fillText').map((c) => [c.args[0], c.fillStyle])).toEqual([
+      ['a', '#585858'],
+      ['b', '#585858'],
+      ['世', '#e7ecf3'],
+    ])
   })
 })

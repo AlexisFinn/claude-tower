@@ -1,33 +1,44 @@
-import { DEFAULT_BG, mixColors } from './termPalette';
+import { DEFAULT_BG, mixColors } from './termPalette'
 
 /** Fraction of the way to white by which a dark text color is lifted. */
-const LIFT = 0.25;
+const LIFT = 0.25
 /** Glyph outline width, per pixel of font size. */
-const STROKE_PER_PX = 0.045;
+const STROKE_PER_PX = 0.045
+/** Background luminance under which dim text is lifted: the default background and near-black ones, not colored ones. */
+const DARK_BACKGROUND = 0.05
+/** Text luminance under which a color is lifted, about mid-gray. */
+const DARK_TEXT = 0.25
 
-const HEX = /^#[0-9a-f]{6}$/i;
+const HEX = /^#[0-9a-f]{6}$/i
 
 /** Relative luminance of a #rrggbb color, from 0 to 1. */
 function luminance(hex: string): number {
-  const v = parseInt(hex.slice(1), 16);
+  const v = parseInt(hex.slice(1), 16)
   const channel = (shift: number): number => {
-    const c = ((v >> shift) & 0xff) / 255;
-    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  };
-  return 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0);
+    const c = ((v >> shift) & 0xff) / 255
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+  }
+  return 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
 }
+
+const colorCache = new Map<string, string>()
 
 /**
  * Returns the color a thumbnail draws text in. At a few pixels per glyph, dim
- * text fades into the dark background, so a color darker than mid-gray moves
- * part of the way to white; a light color, or any color on a light
- * background, is kept.
+ * text fades into a dark background, so on the default background or a
+ * near-black one a color darker than mid-gray moves part of the way to white.
+ * Other colors, and text on any other background, are kept.
  */
 export function textColor(fg: string, bg: string | null): string {
-  if (!HEX.test(fg)) return fg;
-  const back = bg ?? DEFAULT_BG;
-  if (HEX.test(back) && luminance(back) > 0.2) return fg;
-  return luminance(fg) < 0.25 ? mixColors(fg, '#ffffff', LIFT) : fg;
+  const key = `${fg}|${bg ?? ''}`
+  let out = colorCache.get(key)
+  if (out === undefined) {
+    const back = bg ?? DEFAULT_BG
+    const dark = HEX.test(fg) && HEX.test(back) && luminance(back) < DARK_BACKGROUND && luminance(fg) < DARK_TEXT
+    out = dark ? mixColors(fg, '#ffffff', LIFT) : fg
+    colorCache.set(key, out)
+  }
+  return out
 }
 
 /**
@@ -35,5 +46,14 @@ export function textColor(fg: string, bg: string | null): string {
  * it thickens the strokes, which downscaling otherwise thins to faint lines.
  */
 export function strokeWidth(fontPx: number): number {
-  return fontPx * STROKE_PER_PX;
+  return fontPx * STROKE_PER_PX
+}
+
+/**
+ * Reports whether a glyph gets the outline: wide glyphs (CJK, emoji) and
+ * glyphs outside the Basic Multilingual Plane are often drawn in color or
+ * already dense, and an outline would only blur them.
+ */
+export function outlines(ch: string, wide: boolean): boolean {
+  return !wide && ch.length === 1
 }

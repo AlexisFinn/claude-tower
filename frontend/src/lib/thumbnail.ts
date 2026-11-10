@@ -4,7 +4,7 @@ import { glyphShapes, isBoxGlyph, type Shape } from './boxDrawing'
 import { changedRows } from './rowDiff'
 import { readRow, type BufferLike, type DrawCell, type Row } from './screenCells'
 import { DEFAULT_BG } from './termPalette'
-import { strokeWidth, textColor } from './thumbnailInk'
+import { outlines, strokeWidth, textColor } from './thumbnailInk'
 import { canvasScale, cellBounds } from './thumbnailLayout'
 
 /** Font stack of the thumbnails. */
@@ -95,26 +95,39 @@ function paintRow(ctx: CanvasRenderingContext2D, row: Row, y: number, px: Pixels
   const stroke = strokeWidth(px.font)
   ctx.lineJoin = 'round'
   let font = ''
+  let fill = ''
+  let outline = ''
   for (const c of row.cells) {
     const x0 = cellBounds(c.col, px.cellWidth)[0]
     const code = c.ch === '' ? 0 : (c.ch.codePointAt(0) ?? 0)
+    const color = textColor(c.fg, c.bg)
     if (c.ch !== '' && c.ch.length === 1 && isBoxGlyph(code)) {
       paintShapes(ctx, glyphShapes(code, right(c) - x0, height), x0, y0, c.fg)
+      fill = ''
+      outline = ''
     } else if (c.ch !== '') {
       const next = `${c.italic ? 'italic ' : ''}${c.bold ? 'bold ' : ''}${px.font}px ${px.family}`
       if (next !== font) {
         ctx.font = next
         font = next
       }
-      const color = textColor(c.fg, c.bg)
-      ctx.fillStyle = color
-      ctx.strokeStyle = color
-      ctx.lineWidth = stroke
+      if (color !== fill) {
+        ctx.fillStyle = color
+        fill = color
+      }
       ctx.fillText(c.ch, x0, baseline)
-      ctx.strokeText(c.ch, x0, baseline)
+      if (outlines(c.ch, c.wide)) {
+        if (color !== outline) {
+          ctx.strokeStyle = color
+          ctx.lineWidth = stroke
+          outline = color
+        }
+        ctx.strokeText(c.ch, x0, baseline)
+      }
     }
     if (c.underline) {
-      ctx.fillStyle = c.fg
+      ctx.fillStyle = color
+      fill = color
       ctx.fillRect(x0, Math.min(y1 - underline, baseline + underline), right(c) - x0, underline)
     }
   }
