@@ -4,7 +4,6 @@ import { bodyGeometry, type BodyGeometry } from './bodySize'
 import { screenSequence } from './screenSequence'
 import { createThumbnail } from './thumbnail'
 import { DEFAULT_BG } from './termPalette'
-import type { ThumbnailStyle } from './thumbnailStyle'
 
 interface Call {
   name: string
@@ -66,11 +65,9 @@ function show(lines: string[], rows: number): Promise<void> {
   return new Promise((resolve) => term.write(screenSequence(lines, rows), resolve))
 }
 
-const plain: ThumbnailStyle = { heavy: false, direct: false }
-
-function draw(thumbnail: ReturnType<typeof createThumbnail>, g: BodyGeometry, dpr = 1, style = plain): void {
+function draw(thumbnail: ReturnType<typeof createThumbnail>, g: BodyGeometry, dpr = 1): void {
   calls.length = 0
-  thumbnail.draw(term.buffer.active, g, dpr, style)
+  thumbnail.draw(term.buffer.active, g, dpr)
 }
 
 function paintedRows(): number[] {
@@ -167,25 +164,11 @@ describe('createThumbnail', () => {
     expect(paintedRows()).toHaveLength(3)
   })
 
-  it('outlines the glyphs and repaints everything when the style becomes heavy', async () => {
+  it('outlines the glyphs it fills', async () => {
     await show(lines, 5)
-    const thumbnail = createThumbnail(canvas as unknown as HTMLCanvasElement)
-    const g = geometry()
-    draw(thumbnail, g)
-    expect(calls.some((c) => c.name === 'strokeText')).toBe(false)
-    draw(thumbnail, g, 1, { heavy: true, direct: false })
-    expect(paintedRows()).toHaveLength(5)
-    expect(calls.some((c) => c.name === 'strokeText')).toBe(true)
-  })
-
-  it('draws at the display resolution when the style is direct', async () => {
-    await show(lines, 5)
-    const thumbnail = createThumbnail(canvas as unknown as HTMLCanvasElement)
-    const g = geometry()
-    draw(thumbnail, g)
-    const oversampled = canvas.width
-    draw(thumbnail, g, 1, { heavy: false, direct: true })
-    expect(canvas.width).toBe(Math.round(oversampled / 2))
-    expect(paintedRows()).toHaveLength(5)
+    draw(createThumbnail(canvas as unknown as HTMLCanvasElement), geometry())
+    const filled = calls.filter((c) => c.name === 'fillText').length
+    expect(filled).toBeGreaterThan(0)
+    expect(calls.filter((c) => c.name === 'strokeText')).toHaveLength(filled)
   })
 })

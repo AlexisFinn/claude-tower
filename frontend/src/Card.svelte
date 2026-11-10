@@ -20,7 +20,6 @@
   import type { Rect } from './lib/layout'
   import { screenSequence } from './lib/screenSequence'
   import { createThumbnail, type Thumbnail } from './lib/thumbnail'
-  import type { ThumbnailStyle } from './lib/thumbnailStyle'
 
   interface Props {
     card: core.Card
@@ -29,7 +28,6 @@
     rect: Rect
     selected: boolean
     background?: BackgroundTasks
-    thumbnailStyle: ThumbnailStyle
     onSelect: (pid: number) => void
     onFocus: (pid: number) => void
     onFullscreen: (pid: number) => void
@@ -45,7 +43,6 @@
     rect,
     selected,
     background,
-    thumbnailStyle,
     onSelect,
     onFocus,
     onFullscreen,
@@ -64,7 +61,7 @@
   let dpr = $state(window.devicePixelRatio || 1)
   let lastContentKey = ''
   let lastPaintKey = ''
-  let current: { geometry: BodyGeometry; dpr: number; style: ThumbnailStyle } | null = null
+  let current: { geometry: BodyGeometry; dpr: number } | null = null
 
   // The card object is replaced on every refresh: effects depend on these values instead.
   const pid = $derived(card.PID)
@@ -126,20 +123,19 @@
   /** Draws the buffer with the latest geometry; a write still pending finishes by calling it again. */
   function paint(): void {
     if (!term || !thumbnail || !current) return
-    thumbnail.draw(term.buffer.active, current.geometry, current.dpr, current.style)
+    thumbnail.draw(term.buffer.active, current.geometry, current.dpr)
   }
 
   $effect(() => {
     const t = term
     const g = geometry
     const ratio = dpr
-    const style = thumbnailStyle
     if (!t || !g || !thumbnail || !screen) return
     const contentKey = `${screen.Hash}|${g.cols}x${g.rows}`
-    const paintKey = `${contentKey}|${g.font}|${ratio}|${style.heavy}|${style.direct}`
+    const paintKey = `${contentKey}|${g.font}|${ratio}`
     if (paintKey === lastPaintKey) return
     lastPaintKey = paintKey
-    current = { geometry: g, dpr: ratio, style }
+    current = { geometry: g, dpr: ratio }
     if (contentKey === lastContentKey) {
       paint()
       return

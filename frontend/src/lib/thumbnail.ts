@@ -4,8 +4,8 @@ import { glyphShapes, isBoxGlyph, type Shape } from './boxDrawing'
 import { changedRows } from './rowDiff'
 import { readRow, type BufferLike, type DrawCell, type Row } from './screenCells'
 import { DEFAULT_BG } from './termPalette'
-import { canvasScale, cellBounds, OVERSAMPLING } from './thumbnailLayout'
-import { strokeWidth, textColor, type ThumbnailStyle } from './thumbnailStyle'
+import { strokeWidth, textColor } from './thumbnailInk'
+import { canvasScale, cellBounds } from './thumbnailLayout'
 
 /** Font stack of the thumbnails. */
 export const THUMBNAIL_FONT_FAMILY = 'ui-monospace, "SFMono-Regular", Menlo, "DejaVu Sans Mono", "Liberation Mono", monospace'
@@ -71,7 +71,6 @@ interface Pixels {
   font: number
   family: string
   metrics: FontMetrics
-  style: ThumbnailStyle
 }
 
 function paintRow(ctx: CanvasRenderingContext2D, row: Row, y: number, px: Pixels): void {
@@ -93,8 +92,7 @@ function paintRow(ctx: CanvasRenderingContext2D, row: Row, y: number, px: Pixels
   const { ascent, descent } = px.metrics
   const baseline = y0 + Math.round((height - (ascent + descent) * px.font) / 2 + ascent * px.font)
   const underline = Math.max(1, Math.round(px.font / 14))
-  const stroke = strokeWidth(px.font, px.style)
-  ctx.lineWidth = stroke
+  const stroke = strokeWidth(px.font)
   ctx.lineJoin = 'round'
   let font = ''
   for (const c of row.cells) {
@@ -108,14 +106,12 @@ function paintRow(ctx: CanvasRenderingContext2D, row: Row, y: number, px: Pixels
         ctx.font = next
         font = next
       }
-      const color = textColor(c.fg, c.bg, px.style)
+      const color = textColor(c.fg, c.bg)
       ctx.fillStyle = color
+      ctx.strokeStyle = color
+      ctx.lineWidth = stroke
       ctx.fillText(c.ch, x0, baseline)
-      if (stroke > 0) {
-        ctx.strokeStyle = color
-        ctx.lineWidth = stroke
-        ctx.strokeText(c.ch, x0, baseline)
-      }
+      ctx.strokeText(c.ch, x0, baseline)
     }
     if (c.underline) {
       ctx.fillStyle = c.fg
@@ -130,11 +126,10 @@ export interface Thumbnail {
   /**
    * Draws the first rows of the buffer for a geometry. The canvas is displayed
    * at the geometry size and its backing store is oversampled, so the browser
-   * downscales an image, unless the style draws at the display resolution.
-   * Everything is redrawn when the geometry, the font, the device pixel ratio
-   * or the style changed.
+   * downscales an image. Everything is redrawn when the geometry, the font or
+   * the device pixel ratio changed.
    */
-  draw(buffer: BufferLike, geometry: BodyGeometry, dpr: number, style: ThumbnailStyle): void
+  draw(buffer: BufferLike, geometry: BodyGeometry, dpr: number): void
 }
 
 /** Creates a thumbnail that draws into a canvas with a font family. */
@@ -146,11 +141,11 @@ export function createThumbnail(canvas: HTMLCanvasElement, family: string = THUM
   let cell: IBufferCell | undefined
 
   return {
-    draw(buffer, g, dpr, style) {
+    draw(buffer, g, dpr) {
       if (!ctx) return
       const cssWidth = g.cols * g.cellWidth
       const cssHeight = g.rows * g.cellHeight
-      const scale = canvasScale(dpr, cssWidth, cssHeight, style.direct ? 1 : OVERSAMPLING)
+      const scale = canvasScale(dpr, cssWidth, cssHeight)
       const px: Pixels = {
         width: Math.max(1, Math.round(g.cols * g.cellWidth * scale)),
         cellWidth: g.cellWidth * scale,
@@ -158,10 +153,9 @@ export function createThumbnail(canvas: HTMLCanvasElement, family: string = THUM
         font: g.font * scale,
         family,
         metrics,
-        style,
       }
       const height = Math.max(1, Math.round(g.rows * px.cellHeight))
-      const key = `${px.width}x${height}|${g.cols}x${g.rows}|${px.font}|${style.heavy}`
+      const key = `${px.width}x${height}|${g.cols}x${g.rows}|${px.font}`
       if (key !== layoutKey) {
         layoutKey = key
         canvas.width = px.width
