@@ -87,3 +87,35 @@ func (s Server) SweepViewSessions(ctx context.Context) error {
 	}
 	return firstErr
 }
+
+// ViewSessionsOf lists the IDs of the view sessions that the server groups,
+// at this moment, with the pane's session.
+func (s Server) ViewSessionsOf(ctx context.Context, pane Pane) ([]string, error) {
+	out, err := s.Exec(ctx, nil, "list-sessions", "-F", "#{session_id}\t#{session_name}\t#{session_group}")
+	if err != nil {
+		return nil, fmt.Errorf("list-sessions : %w", err)
+	}
+	type entry struct{ id, name, group string }
+	var entries []entry
+	group := ""
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Split(line, "\t")
+		if len(f) != 3 {
+			continue
+		}
+		entries = append(entries, entry{f[0], f[1], f[2]})
+		if f[0] == pane.SessionID {
+			group = f[2]
+		}
+	}
+	if group == "" {
+		return nil, nil
+	}
+	var ids []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.name, ViewPrefix) && e.group == group {
+			ids = append(ids, e.id)
+		}
+	}
+	return ids, nil
+}

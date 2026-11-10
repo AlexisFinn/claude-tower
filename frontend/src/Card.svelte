@@ -124,7 +124,7 @@
     onMeasure(pid, { cols: next.cols, rows: next.rows })
   })
 
-  const resizable = $derived(card.Private)
+  const resizable = $derived(card.Private && !card.Detached)
   $effect(() => {
     if (!resizable || !inTmux || bodyWidth <= 0 || bodyHeight <= 0) {
       onFit(pid, null)

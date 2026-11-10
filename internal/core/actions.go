@@ -135,8 +135,9 @@ const (
 // Fit resizes the window of a session of the private server to cols x rows,
 // so that its card shows it without shrinking the text. A session that a
 // client shows, such as the fullscreen view or a terminal of the user, keeps
-// the size of that client. The clients are read again, because one may have
-// attached since the last snapshot.
+// the size of that client, and so does a session with a view session not
+// attached yet. Both are read again, because they may have appeared since the
+// last snapshot.
 func (c *Core) Fit(ctx context.Context, pid, cols, rows int) error {
 	if cols < minFitCols || rows < minFitRows || cols > maxFitCells || rows > maxFitCells {
 		return fmt.Errorf("taille refusée : %dx%d", cols, rows)
@@ -148,8 +149,19 @@ func (c *Core) Fit(ctx context.Context, pid, cols, rows int) error {
 	if private := c.privateSocket(); private == "" || pane.Server.Socket != private {
 		return errors.New("seules les sessions lancées par claude-tower s'adaptent à leur carte")
 	}
+	// An attach session shows a background session that other clients may
+	// show too: its size is theirs to choose.
+	if strings.HasPrefix(pane.SessionName, tmux.AttachPrefix) {
+		return errors.New("une session d'arrière-plan garde sa taille")
+	}
 	if pane.Width == cols && pane.Height == rows {
 		return nil
+	}
+	// A view session shows the pane in fullscreen, or is about to: its client
+	// is not among Clients, which leaves view sessions out.
+	views, err := pane.Server.ViewSessionsOf(ctx, pane)
+	if err != nil || len(views) > 0 {
+		return err
 	}
 	clients, err := pane.Server.Clients(ctx)
 	if err != nil {

@@ -45,6 +45,10 @@
 
   const sizes = new Map<number, GridSize>()
   const fits = new Map<number, GridSize>()
+  // The last size asked per session: a session that cannot reach it, such as a
+  // window split in several panes, is not asked again until the wanted size
+  // changes or a fullscreen view has shown it.
+  const asked = new Map<number, GridSize>()
   const visible = new Set<number>()
   const failures = createFailureTracker()
   const notifier = createToasts((list) => (toasts = list))
@@ -76,8 +80,12 @@
   }
 
   function onFit(pid: number, size: GridSize | null): void {
-    if (size === null) fits.delete(pid)
-    else fits.set(pid, size)
+    if (size === null) {
+      fits.delete(pid)
+      asked.delete(pid)
+    } else {
+      fits.set(pid, size)
+    }
   }
 
   /**
@@ -87,11 +95,15 @@
    */
   async function fit(card: core.Card, screen: core.Screen): Promise<void> {
     const size = fits.get(card.PID)
+    // A client resizes the window while it shows the session: the size is asked again once it leaves.
+    if (card.Attached) asked.delete(card.PID)
     if (!size || card.Attached || (screen.Width === size.cols && screen.Height === size.rows)) return
+    if (sameSize(asked.get(card.PID), size)) return
+    asked.set(card.PID, size)
     try {
       await FitSession(card.PID, size.cols, size.rows)
     } catch {
-      // The next screen still has the old size, so the next cycle tries again.
+      // A failure is not retried until the wanted size changes.
     }
   }
 
@@ -191,6 +203,7 @@
 
   function closeFullscreen(): void {
     if (fullscreen === null) return
+    asked.delete(fullscreen.PID)
     fullscreen = null
     refresher.kick()
   }

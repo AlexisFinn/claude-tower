@@ -251,7 +251,7 @@ func (h *Hosting) Kill(ctx context.Context, pane tmux.Pane) error {
 	if pane.Server.Socket != sock {
 		return errors.New("seules les sessions lancées par claude-tower peuvent être arrêtées")
 	}
-	views, err := viewSessionsOf(ctx, pane)
+	views, err := pane.Server.ViewSessionsOf(ctx, pane)
 	if err != nil {
 		return err
 	}
@@ -264,36 +264,4 @@ func (h *Hosting) Kill(ctx context.Context, pane tmux.Pane) error {
 		return fmt.Errorf("kill-session : %w", err)
 	}
 	return nil
-}
-
-// viewSessionsOf lists the IDs of the view sessions that the server groups,
-// at this moment, with the pane's session.
-func viewSessionsOf(ctx context.Context, pane tmux.Pane) ([]string, error) {
-	out, err := pane.Server.Exec(ctx, nil, "list-sessions", "-F", "#{session_id}\t#{session_name}\t#{session_group}")
-	if err != nil {
-		return nil, fmt.Errorf("list-sessions : %w", err)
-	}
-	type entry struct{ id, name, group string }
-	var entries []entry
-	group := ""
-	for _, line := range strings.Split(string(out), "\n") {
-		f := strings.Split(line, "\t")
-		if len(f) != 3 {
-			continue
-		}
-		entries = append(entries, entry{f[0], f[1], f[2]})
-		if f[0] == pane.SessionID {
-			group = f[2]
-		}
-	}
-	if group == "" {
-		return nil, nil
-	}
-	var ids []string
-	for _, e := range entries {
-		if strings.HasPrefix(e.name, tmux.ViewPrefix) && e.group == group {
-			ids = append(ids, e.id)
-		}
-	}
-	return ids, nil
 }

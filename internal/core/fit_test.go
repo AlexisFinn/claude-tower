@@ -88,3 +88,30 @@ func TestFitRefusesUnusableSizes(t *testing.T) {
 		t.Errorf("resize calls: %v", got)
 	}
 }
+
+func TestFitKeepsTheSizeOfTheFullscreenView(t *testing.T) {
+	e, c := fitEnv(t)
+	// The view session exists, attached or not: its client is not among the clients the snapshot counts.
+	e.fake.listing[e.privSock] = "$7\tb\tb\n$9\tclaude-tower-view-1-1\tb\n"
+	e.fake.clients[e.privSock] = clientLine("/dev/pts/5", 800, "$9", "claude-tower-view-1-1", "b", 1)
+	if err := c.Fit(context.Background(), 200, 120, 40); err != nil {
+		t.Fatal(err)
+	}
+	if got := resizeCalls(e, e.privSock); got != nil {
+		t.Errorf("window of the fullscreen view resized: %v", got)
+	}
+}
+
+func TestFitLeavesBackgroundAttachSessionsAlone(t *testing.T) {
+	e, c := fitEnv(t)
+	e.fake.panes[e.privSock] = paneLine("%2", 20, "$7", "claude-tower-bg-bbbbbbbb", "@7", "")
+	if _, err := c.Cards(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Fit(context.Background(), 200, 120, 40); err == nil {
+		t.Error("attach session resized")
+	}
+	if got := resizeCalls(e, e.privSock); got != nil {
+		t.Errorf("resize calls: %v", got)
+	}
+}
