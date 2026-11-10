@@ -69,8 +69,10 @@ type Core struct {
 	launchSeq uint64
 	failures  []StartFailure
 
-	attaching   map[string]bool      // background ids whose attach session is being created
-	attachTried map[string]time.Time // last attach attempt, per background id
+	attaching   map[string]bool          // background ids whose attach session is being created
+	attachTried map[string]attachAttempt // attach attempts, per background id
+	unneeded    map[string]int           // consecutive snapshots an attach pane was unneeded, per pane ID
+	removing    map[string]bool          // attach panes being removed, per pane ID
 
 	bgMu     sync.Mutex
 	trackers map[string]*background.Tracker // keyed by session ID
@@ -127,7 +129,9 @@ func New(opts Options) (*Core, error) {
 		launches: map[string]*launch{},
 
 		attaching:   map[string]bool{},
-		attachTried: map[string]time.Time{},
+		attachTried: map[string]attachAttempt{},
+		unneeded:    map[string]int{},
+		removing:    map[string]bool{},
 	}, nil
 }
 

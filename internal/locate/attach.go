@@ -72,10 +72,20 @@ func parsePSAttachments(out string) Attachments {
 }
 
 // AttachTarget returns the session id of the command line of a claude
-// attach client: a program whose name contains "claude", options only, the
-// word attach, then the id.
+// attach client: a program whose name contains "claude", possibly run by
+// node, bun or deno, options only, the word attach, then the id.
 func AttachTarget(argv []string) (string, bool) {
-	if len(argv) < 3 || !strings.Contains(strings.ToLower(filepath.Base(argv[0])), "claude") {
+	// A script launcher runs the claude script given as its first argument,
+	// whose name is often cli.js in a claude directory: the whole path counts.
+	name := filepath.Base(argv[0])
+	if len(argv) > 1 {
+		switch name {
+		case "node", "bun", "deno":
+			argv = argv[1:]
+			name = argv[0]
+		}
+	}
+	if len(argv) < 3 || !strings.Contains(strings.ToLower(name), "claude") {
 		return "", false
 	}
 	for i := 1; i < len(argv)-1; i++ {

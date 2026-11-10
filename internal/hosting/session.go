@@ -21,6 +21,10 @@ var startupCheckDelay = time.Second
 
 var commandNameRe = regexp.MustCompile(`^[A-Za-z0-9._+-]+$`)
 
+// backgroundIDRe accepts the ids of background sessions, which become
+// command arguments and part of a tmux session name.
+var backgroundIDRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]*$`)
+
 func isExecutable(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
@@ -99,7 +103,7 @@ func (h *Hosting) NewAttachSession(ctx context.Context, dir, id string, env []st
 	if h.Self == "" {
 		return tmux.Pane{}, errors.New("chemin de claude-tower inconnu")
 	}
-	if id == "" || strings.ContainsAny(id, " \t\n/") {
+	if !backgroundIDRe.MatchString(id) {
 		return tmux.Pane{}, fmt.Errorf("identifiant de session invalide : %q", id)
 	}
 	if err := h.EnsureConfig(ctx); err != nil {

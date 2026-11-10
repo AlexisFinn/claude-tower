@@ -415,8 +415,10 @@ func TestNewAttachSessionDoesNotRename(t *testing.T) {
 	if _, err := h.NewAttachSession(context.Background(), "/work", "ab12", h.Env); !errors.Is(err, ErrSessionExists) {
 		t.Errorf("err: %v", err)
 	}
-	if _, err := h.NewAttachSession(context.Background(), "/work", "a b", h.Env); err == nil {
-		t.Error("invalid id accepted")
+	for _, id := range []string{"a b", "-x", "a;b", `a"b`, "a/b", ""} {
+		if _, err := h.NewAttachSession(context.Background(), "/work", id, h.Env); err == nil {
+			t.Errorf("invalid id %q accepted", id)
+		}
 	}
 }
 

@@ -90,9 +90,13 @@ func TestPlanAttachments(t *testing.T) {
 		panes:         map[int]tmux.Pane{1: ours, 4: {Server: user, ID: "%1"}},
 		background:    map[int]string{1: "aaaaaaaa", 2: "bbbbbbbb", 3: "cccccccc", 4: "dddddddd"},
 		listedPrivate: []tmux.Pane{ours, orphan, plain},
+		userComplete:  true,
 	}
 	now := time.Unix(1000, 0)
-	tried := map[string]time.Time{"cccccccc": now.Add(-time.Second), "bbbbbbbb": now.Add(-attachRetry)}
+	tried := map[string]attachAttempt{
+		"cccccccc": {at: now.Add(-time.Second), count: 1},
+		"bbbbbbbb": {at: now.Add(-attachRetry), count: 1},
+	}
 	w := planAttachments(snap, tried, now)
 	var created []int
 	for _, s := range w.create {
@@ -103,6 +107,22 @@ func TestPlanAttachments(t *testing.T) {
 	}
 	if !reflect.DeepEqual(w.remove, []tmux.Pane{orphan}) {
 		t.Errorf("removed: %+v", w.remove)
+	}
+	if !reflect.DeepEqual(w.shown, []string{"aaaaaaaa"}) {
+		t.Errorf("shown: %v", w.shown)
+	}
+
+	// A user server that failed may hide the pane showing session 2.
+	snap.userComplete = false
+	if w := planAttachments(snap, tried, now); len(w.create) != 0 {
+		t.Errorf("created with an incomplete snapshot: %+v", w.create)
+	}
+	snap.userComplete = true
+
+	// After two failed attempts, the wait doubles.
+	tried["bbbbbbbb"] = attachAttempt{at: now.Add(-attachRetry), count: 2}
+	if w := planAttachments(snap, tried, now); len(w.create) != 0 {
+		t.Errorf("retried too early: %+v", w.create)
 	}
 
 	// Once the user shows session 1 in a pane of theirs, our attach session goes.
@@ -160,5 +180,50 @@ func TestKillStopsBackgroundSession(t *testing.T) {
 	}
 	if e.fake.has(e.privSock, "kill-session") {
 		t.Error("attach session killed instead of the background session")
+	}
+}
+
+func TestAttachDelay(t *testing.T) {
+	for count, want := range map[int]time.Duration{0: attachRetry, 1: attachRetry, 2: 2 * attachRetry, 3: 4 * attachRetry, 50: maxAttachRetry} {
+		if got := attachDelay(count); got != want {
+			t.Errorf("attachDelay(%d) = %v, want %v", count, got, want)
+		}
+	}
+}
+
+func TestAmbiguousNamesAreNotAttachTargets(t *testing.T) {
+	a := registry.Session{SessionID: "aaaaaaaa-1", Name: "work"}
+	b := registry.Session{SessionID: "bbbbbbbb-2", Name: "work"}
+	c := registry.Session{SessionID: "cccccccc-3", Name: "aaaaaaaa"}
+	d := registry.Session{SessionID: "dddddddd-4", Name: "solo"}
+	amb := ambiguousNames([]registry.Session{a, b, c, d})
+	if attachTargets("work", a, amb) || attachTargets("aaaaaaaa", c, amb) {
+		t.Errorf("ambiguous name accepted: %v", amb)
+	}
+	if !attachTargets("aaaaaaaa", a, amb) || !attachTargets("solo", d, amb) || !attachTargets("bbbbbbbb-2", b, amb) {
+		t.Errorf("target refused: %v", amb)
+	}
+}
+
+func TestOrphanAttachSessionRemovedAfterTwoSnapshots(t *testing.T) {
+	e := newEnv(t)
+	e.fake.panes[e.privSock] = paneLine("%9", 90, "$9", tmux.AttachPrefix+"gone0000", "@9", "")
+	c := e.core()
+	if _, err := c.Cards(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if e.fake.has(e.privSock, "kill-session") {
+		t.Fatal("removed after a single snapshot")
+	}
+	if _, err := c.Cards(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for !e.fake.has(e.privSock, "kill-session") {
+		if time.Now().After(deadline) {
+			t.Fatal("orphan attach session kept")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

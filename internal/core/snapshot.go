@@ -28,6 +28,9 @@ type snapshot struct {
 	listedPrivate []tmux.Pane
 	// background holds the short id of each background session, keyed by PID.
 	background map[int]string
+	// userComplete reports that every server of the user answered and the
+	// attach clients were read, so that a session without pane really has none.
+	userComplete bool
 }
 
 // serverState is what one server reported.
@@ -58,7 +61,8 @@ func (c *Core) refresh(ctx context.Context) (snapshot, error) {
 	}
 	// Without the attach clients, background sessions fall back to the
 	// attach sessions of the private server.
-	attached, _ := c.opts.ReadAttachments(ctx, c.opts.Run)
+	attached, attachErr := c.opts.ReadAttachments(ctx, c.opts.Run)
+	userComplete := attachErr == nil
 	var panes []tmux.Pane
 	clients := map[string][]tmux.Client{}
 	privateOK, privateGone := false, false
@@ -68,6 +72,8 @@ func (c *Core) refresh(ctx context.Context) (snapshot, error) {
 		if !st.ok {
 			if st.socket == private {
 				privateGone = serverNotRunning(st.err)
+			} else if !serverNotRunning(st.err) {
+				userComplete = false
 			}
 			continue
 		}
@@ -91,6 +97,7 @@ func (c *Core) refresh(ctx context.Context) (snapshot, error) {
 		privateGone:   privateGone,
 		privateIDs:    privateIDs,
 		listedPrivate: listedPrivate,
+		userComplete:  userComplete,
 	}
 	snap.background = matchBackground(sessions, panes, tree, attached, private, snap.panes)
 	// A pane whose PID is already a session's key would give two cards the
