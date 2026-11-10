@@ -67,7 +67,7 @@ export function sameGeometry(a: BodyGeometry | null, b: BodyGeometry | null): bo
 }
 
 /** Font size, in pixels, that a session sized to its card displays its text at. */
-export const FIT_FONT = 12
+export const FIT_FONT = 14
 /**
  * Smallest terminal a session is sized to: Claude Code docks side panes, such
  * as the tasks pane, only from 144 columns.

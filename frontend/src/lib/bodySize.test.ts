@@ -76,20 +76,20 @@ describe('fitGrid', () => {
   const ratio = { width: 0.6, height: 1.2 }
 
   it('fills the body at the fit font', () => {
-    // A cell is 7.2 x 14.4 px at 12 px.
-    expect(fitGrid(1200, 432, ratio)).toEqual({ cols: 166, rows: 29 })
+    // A cell is 8.4 x 16.8 px at 14 px.
+    expect(fitGrid(1400, 432, ratio)).toEqual({ cols: 166, rows: 25 })
   })
 
   it('gives the bodyGeometry font back for that many columns', () => {
-    const size = fitGrid(1200, 432, ratio)
-    const g = bodyGeometry(size.cols, size.rows, 1200, 432, ratio)
+    const size = fitGrid(1400, 432, ratio)
+    const g = bodyGeometry(size.cols, size.rows, 1400, 432, ratio)
     expect(g.font).toBeCloseTo(FIT_FONT, 0)
     expect(g.rows).toBe(size.rows)
   })
 
   it('never goes below the smallest usable terminal nor above the largest', () => {
     expect(fitGrid(100, 50, ratio).cols).toBe(MIN_FIT.cols)
-    // A 900 px body gives 125 columns at 12 px: it gets the 144 that dock the tasks pane, with a smaller font.
+    // A 900 px body gives 107 columns at 14 px: it gets the 144 that dock the tasks pane, with a smaller font.
     expect(fitGrid(900, 432, ratio)).toEqual({ cols: 144, rows: 34 })
     expect(fitGrid(0, -5, ratio)).toEqual(MIN_FIT)
     expect(fitGrid(1e6, 1e6, ratio)).toEqual({ cols: MAX_FIT, rows: MAX_FIT })
