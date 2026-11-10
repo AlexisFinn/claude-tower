@@ -164,6 +164,68 @@ func TestBarUnreadableTranscriptKeepsBusy(t *testing.T) {
 	}
 }
 
+func idleSession(pid int) string {
+	return fmt.Sprintf(`{"pid":%d,"sessionId":%q,"name":"quiet","status":"idle"}`, pid, tid)
+}
+
+func TestBarShowsBackgroundWorkOfIdleSession(t *testing.T) {
+	pid := os.Getpid()
+	dir := fixture(t, map[int]string{pid: idleSession(pid)})
+	cases := []struct {
+		name   string
+		counts background.Counts
+		want   string
+	}{
+		{"agents running", background.Counts{Agents: 1}, "#[fg=cyan]◐ quiet#[default]\n"},
+		{"shells running", background.Counts{Shells: 2}, "#[fg=cyan]◐ quiet#[default]\n"},
+		{"unknown counts", background.Counts{Agents: background.Unknown, Shells: background.Unknown}, "#[fg=colour244]○ quiet#[default]\n"},
+		{"nothing running", background.Counts{}, "#[fg=colour244]○ quiet#[default]\n"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			d := fakeDeps(nil)
+			d.background = func(context.Context, *transcript.Finder, []registry.Session) map[int]background.Counts {
+				return map[int]background.Counts{pid: c.counts}
+			}
+			_, out, _ := runArgsDeps([]string{"bar", "--dir", dir}, env(nil), d)
+			if out != c.want {
+				t.Errorf("got %q want %q", out, c.want)
+			}
+		})
+	}
+}
+
+func TestBarCountsBackgroundWorkOfIdleSessionsOnly(t *testing.T) {
+	pid, ppid := os.Getpid(), os.Getppid()
+	dir := fixture(t, map[int]string{
+		pid:  busySession(pid),
+		ppid: fmt.Sprintf(`{"pid":%d,"sessionId":"22222222-2222-3333-4444-555555555555","name":"quiet","status":"idle"}`, ppid),
+	})
+	var counted []int
+	d := fakeDeps(nil)
+	d.background = func(_ context.Context, _ *transcript.Finder, sessions []registry.Session) map[int]background.Counts {
+		for _, s := range sessions {
+			counted = append(counted, s.PID)
+		}
+		return nil
+	}
+	runArgsDeps([]string{"bar", "--dir", dir}, env(nil), d)
+	if len(counted) != 1 || counted[0] != ppid {
+		t.Errorf("counted=%v want [%d]", counted, ppid)
+	}
+}
+
+func TestBarWithoutIdleSessionsCountsNothing(t *testing.T) {
+	pid := os.Getpid()
+	dir := fixture(t, map[int]string{pid: busySession(pid)})
+	d := fakeDeps(nil)
+	d.background = func(context.Context, *transcript.Finder, []registry.Session) map[int]background.Counts {
+		t.Error("background counted")
+		return nil
+	}
+	runArgsDeps([]string{"bar", "--dir", dir}, env(nil), d)
+}
+
 func TestBarUnreadableSessionsDir(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("permissions are not enforced for root")

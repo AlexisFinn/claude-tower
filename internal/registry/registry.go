@@ -44,8 +44,8 @@ type Session struct {
 	StartedAt     time.Time // zero if absent
 	StatusSince   time.Time // statusUpdatedAt, else updatedAt, else zero
 	TmuxPane      string    // "%N" extracted from "tmux", "" if absent or malformed
-	TurnEnded     bool      // never set by registry; filled by callers from transcript.Activity
-	HasBackground bool      // never set by registry; filled by callers when background agents or shells are running
+	TurnEnded     bool      // never set by registry; filled by sessionstate.Enrich from the transcript
+	HasBackground bool      // never set by registry; filled by sessionstate.Enrich when background agents or shells are running
 }
 
 // Reader reads the session registry of one config directory.

@@ -1,5 +1,7 @@
-// Package transcript extracts the last visible activity of a Claude Code
-// session from its JSONL transcript.
+// Package transcript reads the JSONL transcripts of Claude Code sessions: the
+// last visible activity, the lines gained since a previous read and the
+// background task launches and ends. The format is internal to Claude Code:
+// everything that depends on it lives in this package.
 package transcript
 
 import (

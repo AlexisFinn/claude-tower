@@ -18,6 +18,7 @@ import (
 	"claude-tower/internal/hosting"
 	"claude-tower/internal/locate"
 	"claude-tower/internal/registry"
+	"claude-tower/internal/sessionstate"
 	"claude-tower/internal/tmux"
 	"claude-tower/internal/transcript"
 	"claude-tower/internal/view"
@@ -120,7 +121,7 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string, d 
 	dir := configDir(o.dir, home, getenv)
 	switch o.cmd {
 	case "bar":
-		runBar(dir, o.maxWidth, stdout, stderr)
+		runBar(dir, o.maxWidth, d, stdout, stderr)
 		return 0
 	case "list":
 		return runList(dir, home, d, stdout, stderr)
@@ -179,20 +180,45 @@ func configDir(flagDir, home string, getenv func(string) string) string {
 	return filepath.Join(home, ".claude")
 }
 
+// backgroundCounts returns the background work of the sessions, empty when the
+// deps have no way to count it.
+func (d deps) backgroundCounts(ctx context.Context, finder *transcript.Finder, sessions []registry.Session) map[int]background.Counts {
+	if d.background == nil || len(sessions) == 0 {
+		return nil
+	}
+	return d.background(ctx, finder, sessions)
+}
+
+// shownSessions returns the sessions of the infos and their activity by PID.
+func shownSessions(infos []sessionstate.Info) ([]registry.Session, map[int]string) {
+	sessions := make([]registry.Session, len(infos))
+	activity := make(map[int]string, len(infos))
+	for i, info := range infos {
+		sessions[i] = info.Session
+		activity[info.Session.PID] = info.Activity
+	}
+	return sessions, activity
+}
+
 // runBar never fails: errors go to stderr so that the tmux status line stays clean.
-func runBar(dir string, maxWidth int, stdout, stderr io.Writer) {
+func runBar(dir string, maxWidth int, d deps, stdout, stderr io.Writer) {
 	sessions, err := registry.Reader{Dir: dir}.Sessions()
 	if err != nil {
 		fmt.Fprintf(stderr, "claude-tower: %v\n", err)
 		return
 	}
 	finder := transcript.NewFinder(dir)
-	for i, s := range sessions {
-		if s.State == registry.StateBusy {
-			sessions[i].TurnEnded = finder.Last(s.SessionID).TurnEnded
+	// Background work only changes how an idle session is shown. The bar runs
+	// at every status refresh of tmux, so the other sessions are not counted.
+	var idle []registry.Session
+	for _, s := range sessions {
+		if s.State == registry.StateIdle {
+			idle = append(idle, s)
 		}
 	}
-	fmt.Fprintln(stdout, view.Bar(sessions, now(), maxWidth))
+	counts := d.backgroundCounts(context.Background(), finder, idle)
+	shown, _ := shownSessions(sessionstate.Enrich(sessions, finder, counts))
+	fmt.Fprintln(stdout, view.Bar(shown, now(), maxWidth))
 }
 
 func runList(dir, home string, d deps, stdout, stderr io.Writer) int {
@@ -201,25 +227,14 @@ func runList(dir, home string, d deps, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "claude-tower: %v\n", err)
 		return 1
 	}
-	finder := transcript.NewFinder(dir)
-	activity := make(map[int]string, len(sessions))
-	for i, s := range sessions {
-		act := finder.Last(s.SessionID)
-		sessions[i].TurnEnded = act.TurnEnded
-		activity[s.PID] = act.Text
-	}
 	ctx := context.Background()
-	var counts map[int]background.Counts
-	if d.background != nil {
-		counts = d.background(ctx, finder, sessions)
-	}
-	for i, s := range sessions {
-		c := counts[s.PID]
-		sessions[i].HasBackground = c.Agents > 0 || c.Shells > 0
-	}
+	finder := transcript.NewFinder(dir)
+	counts := d.backgroundCounts(ctx, finder, sessions)
+	infos := sessionstate.Enrich(sessions, finder, counts)
+	shown, activity := shownSessions(infos)
 	locations := d.locations(ctx, sessions)
 	t := now()
-	for _, s := range view.SortByUrgency(sessions) {
+	for _, s := range view.SortByUrgency(shown) {
 		fmt.Fprintln(stdout, listLine(s, locations[s.PID], backgroundColumn(counts[s.PID]), activity[s.PID], home, t))
 	}
 	return 0

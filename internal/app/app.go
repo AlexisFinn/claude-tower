@@ -1,6 +1,6 @@
 // Package app holds the methods that the frontend calls. It wires the engine
 // of internal/core and the embedded terminals together; what belongs to the
-// window system comes in through the Emitter and Dialogs interfaces.
+// window system comes in through the Window interface.
 package app
 
 import (
@@ -32,8 +32,10 @@ var (
 // Emitter sends an event to the frontend.
 type Emitter = ptyterm.Emitter
 
-// Dialogs asks the user for something through native dialogs.
-type Dialogs interface {
+// Window is what App needs from the window system: events to the frontend,
+// native dialogs, and the protocol that confirms the closing of the window.
+type Window interface {
+	Emitter
 	// ChooseDirectory returns the directory picked by the user, "" when the
 	// dialog is cancelled.
 	ChooseDirectory() (string, error)
@@ -66,8 +68,7 @@ type Engine interface {
 // App holds the methods bound to the frontend. Startup and Shutdown, which
 // the frontend must not call, are package functions.
 type App struct {
-	emit    Emitter
-	dialogs Dialogs
+	window  Window
 	environ []string
 
 	// newHosting and newCore build what start wires together.
@@ -88,8 +89,8 @@ type App struct {
 
 // New returns an App that has not started. environ is the environment of the
 // process.
-func New(emit Emitter, dialogs Dialogs, environ []string) *App {
-	a := &App{emit: emit, dialogs: dialogs, environ: environ, started: make(chan struct{}), startWait: startWait}
+func New(window Window, environ []string) *App {
+	a := &App{window: window, environ: environ, started: make(chan struct{}), startWait: startWait}
 	a.boot = (*App).start
 	a.newHosting = hosting.NewSystem
 	a.newCore = newCore
@@ -140,7 +141,7 @@ func (a *App) start() {
 
 func (a *App) setEngine(e Engine) {
 	a.engine = e
-	a.terms = ptyterm.NewManager(e, a.emit, a.environ)
+	a.terms = ptyterm.NewManager(e, a.window, a.environ)
 }
 
 // Shutdown closes every embedded terminal.
@@ -190,6 +191,36 @@ func callContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), callTimeout)
 }
 
+// call runs f on the engine with the context of one call, or returns the
+// error that prevented the engine from starting.
+func call[T any](a *App, f func(e Engine, ctx context.Context) (T, error)) (T, error) {
+	e, err := a.ready()
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	ctx, cancel := callContext()
+	defer cancel()
+	return f(e, ctx)
+}
+
+// callErr is call for a function that returns only an error.
+func callErr(a *App, f func(e Engine, ctx context.Context) error) error {
+	_, err := call(a, func(e Engine, ctx context.Context) (struct{}, error) {
+		return struct{}{}, f(e, ctx)
+	})
+	return err
+}
+
+// terminals returns the manager of the embedded terminals, or the error that
+// prevented the engine from starting.
+func (a *App) terminals() (*ptyterm.Manager, error) {
+	if _, err := a.ready(); err != nil {
+		return nil, err
+	}
+	return a.terms, nil
+}
+
 // StartupError returns the reason the application cannot work, "" when it
 // started well.
 func (a *App) StartupError() string {
@@ -213,80 +244,54 @@ func (a *App) StartupWarning() string {
 
 // Cards returns one card per session, in display order.
 func (a *App) Cards() ([]core.Card, error) {
-	e, err := a.ready()
-	if err != nil {
-		return nil, err
-	}
-	ctx, cancel := callContext()
-	defer cancel()
-	return e.Cards(ctx)
+	return call(a, func(e Engine, ctx context.Context) ([]core.Card, error) {
+		return e.Cards(ctx)
+	})
 }
 
 // StartFailures returns the sessions started by the application that ended
 // before Claude Code registered them, since the last call.
 func (a *App) StartFailures() ([]core.StartFailure, error) {
-	e, err := a.ready()
-	if err != nil {
-		return nil, err
-	}
-	return e.StartFailures(), nil
+	return call(a, func(e Engine, _ context.Context) ([]core.StartFailure, error) {
+		return e.StartFailures(), nil
+	})
 }
 
 // Screen returns the bottom of the screen of a session.
 func (a *App) Screen(pid, maxLines int) (core.Screen, error) {
-	e, err := a.ready()
-	if err != nil {
-		return core.Screen{}, err
-	}
-	ctx, cancel := callContext()
-	defer cancel()
-	return e.Screen(ctx, pid, maxLines)
+	return call(a, func(e Engine, ctx context.Context) (core.Screen, error) {
+		return e.Screen(ctx, pid, maxLines)
+	})
 }
 
 // Prompt sends a message to a session.
 func (a *App) Prompt(pid int, text string) error {
-	e, err := a.ready()
-	if err != nil {
-		return err
-	}
-	ctx, cancel := callContext()
-	defer cancel()
-	return e.Prompt(ctx, pid, text)
+	return callErr(a, func(e Engine, ctx context.Context) error {
+		return e.Prompt(ctx, pid, text)
+	})
 }
 
 // Focus brings a session to the user.
 func (a *App) Focus(pid int) (core.FocusResult, error) {
-	e, err := a.ready()
-	if err != nil {
-		return core.FocusResult{}, err
-	}
-	ctx, cancel := callContext()
-	defer cancel()
-	return e.Focus(ctx, pid)
+	return call(a, func(e Engine, ctx context.Context) (core.FocusResult, error) {
+		return e.Focus(ctx, pid)
+	})
 }
 
 // Kill stops a session of the private server.
 func (a *App) Kill(pid int) error {
-	e, err := a.ready()
-	if err != nil {
-		return err
-	}
-	ctx, cancel := callContext()
-	defer cancel()
-	return e.Kill(ctx, pid)
+	return callErr(a, func(e Engine, ctx context.Context) error {
+		return e.Kill(ctx, pid)
+	})
 }
 
 // FitSession resizes a session launched by the application to the size its
 // card shows without shrinking the text, unless a client shows it, and
 // reports whether the session has that size now.
 func (a *App) FitSession(pid, cols, rows int) (bool, error) {
-	e, err := a.ready()
-	if err != nil {
-		return false, err
-	}
-	ctx, cancel := callContext()
-	defer cancel()
-	return e.Fit(ctx, pid, cols, rows)
+	return call(a, func(e Engine, ctx context.Context) (bool, error) {
+		return e.Fit(ctx, pid, cols, rows)
+	})
 }
 
 // NewSession asks for a directory and starts a session there, with the given
@@ -297,7 +302,7 @@ func (a *App) NewSession(name string) error {
 	if err != nil {
 		return err
 	}
-	dir, err := a.dialogs.ChooseDirectory()
+	dir, err := a.window.ChooseDirectory()
 	if err != nil || dir == "" {
 		return err
 	}
@@ -310,65 +315,70 @@ func (a *App) NewSession(name string) error {
 // while it does, closing it emits "quit-requested" instead, which the
 // frontend answers with AckQuit.
 func (a *App) GuardQuit(on bool) {
-	a.dialogs.GuardQuit(on)
+	a.window.GuardQuit(on)
 }
 
 // AckQuit tells that the frontend shows the confirmation of a close request.
 func (a *App) AckQuit() {
-	a.dialogs.AckQuit()
+	a.window.AckQuit()
 }
 
 // Quit closes the application after the user confirmed it. The sessions of
 // the private server keep running.
 func (a *App) Quit() {
-	a.dialogs.Quit()
+	a.window.Quit()
 }
 
 // ChooseFiles asks for files to attach to a message and returns their absolute
 // paths. Cancelling the dialog returns no path and is not an error.
 func (a *App) ChooseFiles() ([]string, error) {
-	return a.dialogs.ChooseFiles()
+	return a.window.ChooseFiles()
 }
 
 // OpenTerminal shows a session in a new terminal of cols by rows cells and
 // returns its ID. The output starts to flow after TermReady.
 func (a *App) OpenTerminal(pid, cols, rows int) (int, error) {
-	if _, err := a.ready(); err != nil {
+	terms, err := a.terminals()
+	if err != nil {
 		return 0, err
 	}
 	ctx, cancel := callContext()
 	defer cancel()
-	return a.terms.Open(ctx, pid, cols, rows)
+	return terms.Open(ctx, pid, cols, rows)
 }
 
 // TermReady tells that the frontend listens to the events of a terminal.
 func (a *App) TermReady(id int) error {
-	if _, err := a.ready(); err != nil {
+	terms, err := a.terminals()
+	if err != nil {
 		return err
 	}
-	return a.terms.Ready(id)
+	return terms.Ready(id)
 }
 
 // TermInput writes what the user typed to a terminal.
 func (a *App) TermInput(id int, data string) error {
-	if _, err := a.ready(); err != nil {
+	terms, err := a.terminals()
+	if err != nil {
 		return err
 	}
-	return a.terms.Input(id, data)
+	return terms.Input(id, data)
 }
 
 // TermResize changes the size of a terminal.
 func (a *App) TermResize(id, cols, rows int) error {
-	if _, err := a.ready(); err != nil {
+	terms, err := a.terminals()
+	if err != nil {
 		return err
 	}
-	return a.terms.Resize(id, cols, rows)
+	return terms.Resize(id, cols, rows)
 }
 
 // CloseTerminal closes a terminal.
 func (a *App) CloseTerminal(id int) error {
-	if _, err := a.ready(); err != nil {
+	terms, err := a.terminals()
+	if err != nil {
 		return err
 	}
-	return a.terms.Close(id)
+	return terms.Close(id)
 }
