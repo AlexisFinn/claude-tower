@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	goruntime "runtime"
 	"sync/atomic"
 	"time"
 
@@ -31,6 +32,12 @@ var icon []byte
 func main() {
 	if cli.IsCLI(os.Args[1:]) {
 		os.Exit(cli.Main(os.Args[1:], os.Stdout, os.Stderr, os.Getenv))
+	}
+	// Under wails dev, the window must stay in the process that wails watches.
+	if productionBuild {
+		if bundle := bundleToOpen(goruntime.GOOS, executable(), os.Getppid()); bundle != "" && openBundle(bundle) {
+			return
+		}
 	}
 	if err := runApp(); err != nil {
 		fmt.Fprintf(os.Stderr, "claude-tower: %v\n", err)
