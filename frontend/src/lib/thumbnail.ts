@@ -7,7 +7,7 @@ import { DEFAULT_BG } from './termPalette'
 import { foldSubpixels, SUBPIXELS } from './subpixel'
 import { cellBounds } from './thumbnailLayout'
 
-/** Font stack of the thumbnails: a monospace font that stays legible at small sizes first. */
+/** Font stack of the thumbnails: JetBrains Mono, which stays legible at small sizes, when installed, then the usual monospace fonts. */
 export const THUMBNAIL_FONT_FAMILY =
   '"JetBrainsMono Nerd Font Mono", "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, "DejaVu Sans Mono", "Liberation Mono", monospace'
 
@@ -122,26 +122,27 @@ function paintRow(ctx: CanvasRenderingContext2D, row: Row, y: number, px: Pixels
   ctx.restore()
 }
 
-/** Shifts a canvas by less than a device pixel so that its top left corner falls on a whole device pixel. */
-function snapToDevicePixels(canvas: HTMLCanvasElement, dpr: number): void {
-  if (typeof canvas.getBoundingClientRect !== 'function') return
-  canvas.style.transform = ''
-  const r = canvas.getBoundingClientRect()
-  const dx = (Math.round(r.left * dpr) - r.left * dpr) / dpr
-  const dy = (Math.round(r.top * dpr) - r.top * dpr) / dpr
-  if (dx !== 0 || dy !== 0) canvas.style.transform = `translate(${dx}px, ${dy}px)`
+/** Returns the device pixels per CSS pixel to draw at: the device pixel ratio, or 1 when it is unusable. */
+function displayScale(dpr: number): number {
+  return Number.isFinite(dpr) && dpr > 0 ? dpr : 1
 }
 
 /** Draws a terminal buffer into a canvas, redrawing only the rows that changed. */
 export interface Thumbnail {
   /**
    * Draws the first rows of the buffer for a geometry, with subpixel
-   * rendering: the backing store has the display resolution and the canvas is
-   * shifted onto whole device pixels, which the color stripes need.
-   * Everything is redrawn when the geometry, the font or the device pixel
-   * ratio changed.
+   * rendering: the backing store has the display resolution, so each of its
+   * pixels is displayed on one device pixel. Everything is redrawn, and the
+   * canvas aligned, when the geometry, the font or the device pixel ratio
+   * changed.
    */
   draw(buffer: BufferLike, geometry: BodyGeometry, dpr: number): void
+  /**
+   * Shifts the canvas by at most half a device pixel so that its top left
+   * corner falls on a whole device pixel, which the color stripes need. To be
+   * called again whenever the canvas moves.
+   */
+  align(dpr: number): void
 }
 
 /** Creates a thumbnail that draws into a canvas with a font family. */
@@ -152,6 +153,8 @@ export function createThumbnail(canvas: HTMLCanvasElement, family: string = THUM
   let signatures: string[] = []
   let cell: IBufferCell | undefined
   let wide: CanvasRenderingContext2D | null = null
+  let folded: ImageData | null = null
+  let shift = { x: 0, y: 0 }
 
   /** Paints a row three times wider into a scratch canvas, then folds it onto the color stripes of the canvas. */
   function paintSubpixelRow(row: Row, y: number, px: Pixels): void {
@@ -172,15 +175,28 @@ export function createThumbnail(canvas: HTMLCanvasElement, family: string = THUM
     paintRow(wide, row, y, px)
     wide.setTransform(1, 0, 0, 1, 0, 0)
     const src = wide.getImageData(0, 0, width, height)
-    const out = ctx.createImageData(px.width, height)
-    foldSubpixels(src.data, out.data, px.width, height)
-    ctx.putImageData(out, 0, y0)
+    if (!folded || folded.width !== px.width || folded.height !== height) folded = ctx.createImageData(px.width, height)
+    foldSubpixels(src.data, folded.data, px.width, height)
+    ctx.putImageData(folded, 0, y0)
+  }
+
+  /** Aligns the canvas from its current position, without clearing its shift first, so no layout is forced twice. */
+  function align(dpr: number): void {
+    const scale = displayScale(dpr)
+    const r = canvas.getBoundingClientRect()
+    const left = (r.left - shift.x) * scale
+    const top = (r.top - shift.y) * scale
+    const next = { x: (Math.round(left) - left) / scale, y: (Math.round(top) - top) / scale }
+    if (Math.abs(next.x - shift.x) < 1e-3 && Math.abs(next.y - shift.y) < 1e-3) return
+    shift = next
+    canvas.style.transform = next.x === 0 && next.y === 0 ? '' : `translate(${next.x}px, ${next.y}px)`
   }
 
   return {
+    align,
     draw(buffer, g, dpr) {
       if (!ctx) return
-      const scale = Math.max(1, Number.isFinite(dpr) ? dpr : 1)
+      const scale = displayScale(dpr)
       const px: Pixels = {
         width: Math.max(1, Math.round(g.cols * g.cellWidth * scale)),
         cellWidth: g.cellWidth * scale,
@@ -190,7 +206,7 @@ export function createThumbnail(canvas: HTMLCanvasElement, family: string = THUM
         metrics,
       }
       const height = Math.max(1, Math.round(g.rows * px.cellHeight))
-      const key = `${px.width}x${height}|${g.cols}x${g.rows}|${px.font}`
+      const key = `${px.width}x${height}|${g.cols}x${g.rows}|${px.cellWidth}x${px.cellHeight}|${px.font}`
       if (key !== layoutKey) {
         layoutKey = key
         canvas.width = px.width
@@ -200,8 +216,8 @@ export function createThumbnail(canvas: HTMLCanvasElement, family: string = THUM
         canvas.style.width = `${px.width / scale}px`
         canvas.style.height = `${height / scale}px`
         signatures = []
+        align(dpr)
       }
-      snapToDevicePixels(canvas, scale)
       cell ??= buffer.getNullCell()
       ctx.textBaseline = 'alphabetic'
       ctx.textAlign = 'left'

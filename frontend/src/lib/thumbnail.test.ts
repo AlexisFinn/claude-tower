@@ -44,7 +44,10 @@ function image(width: number, height: number): ImageData {
 function scratchContext(calls: Call[]): CanvasRenderingContext2D {
   const ctx = fakeContext(calls) as unknown as Record<string, unknown>
   ctx.canvas = { width: 0, height: 0 }
-  ctx.getImageData = (_x: number, _y: number, w: number, h: number) => image(w, h)
+  ctx.getImageData = (x: number, y: number, w: number, h: number) => {
+    calls.push({ name: 'getImageData', args: [x, y, w, h], fillStyle: '' })
+    return image(w, h)
+  }
   return ctx as unknown as CanvasRenderingContext2D
 }
 
@@ -60,9 +63,16 @@ class FakeCanvas {
   width = 0
   height = 0
   style: Record<string, string> = {}
+  /** Position of the canvas before its own transform, in CSS pixels. */
+  left = 0
+  top = 0
   constructor(private readonly ctx: CanvasRenderingContext2D) {}
   getContext(): CanvasRenderingContext2D {
     return this.ctx
+  }
+  getBoundingClientRect(): { left: number; top: number } {
+    const m = /translate\(([-\d.e]+)px, ([-\d.e]+)px\)/.exec(this.style.transform ?? '')
+    return { left: this.left + (m ? Number(m[1]) : 0), top: this.top + (m ? Number(m[2]) : 0) }
   }
 }
 
@@ -221,6 +231,33 @@ describe('createThumbnail', () => {
     expect(puts.map((p) => p.width)).toEqual([canvas.width, canvas.width])
     expect(puts.map((p) => p.y)).toEqual([0, puts[0].height])
     expect(scratch.canvas.width).toBe(3 * canvas.width)
-    expect(calls.some((c) => c.name === 'setTransform' && c.args[0] === 3)).toBe(true)
+    expect(calls.filter((c) => c.name === 'setTransform').map((c) => c.args)).toEqual([
+      [3, 0, 0, 1, 0, -0],
+      [1, 0, 0, 1, 0, 0],
+      [3, 0, 0, 1, 0, -puts[0].height],
+      [1, 0, 0, 1, 0, 0],
+    ])
+    expect(calls.filter((c) => c.name === 'getImageData').map((c) => c.args)).toEqual([
+      [0, 0, 3 * canvas.width, puts[0].height],
+      [0, 0, 3 * canvas.width, puts[1].height],
+    ])
+  })
+
+  it('shifts the canvas onto whole device pixels when it is drawn and when it moves', async () => {
+    await show(['hello'], 1)
+    canvas.left = 10.3
+    canvas.top = 4.75
+    const thumbnail = createThumbnail(canvas as unknown as HTMLCanvasElement)
+    draw(thumbnail, geometry(1), 2)
+    const at = canvas.getBoundingClientRect()
+    expect(Number.isInteger(Math.round(at.left * 2 * 1000) / 1000)).toBe(true)
+    expect(Number.isInteger(Math.round(at.top * 2 * 1000) / 1000)).toBe(true)
+    canvas.left = 20
+    canvas.top = 5
+    thumbnail.align(2)
+    expect(canvas.style.transform).toBe('')
+    canvas.left = 7.1
+    thumbnail.align(1)
+    expect(canvas.getBoundingClientRect().left).toBeCloseTo(7)
   })
 })

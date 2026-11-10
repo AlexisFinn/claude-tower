@@ -40,6 +40,32 @@ describe('foldSubpixels', () => {
     expect(b[0]).toBeLessThan(a[0])
   })
 
+  it('folds each channel from its own channel of the samples', () => {
+    // Three wide pixels: pure red, pure green, pure blue, each spanning all three samples of one output pixel.
+    const src = new Uint8ClampedArray(9 * 4)
+    for (let s = 0; s < 9; s++) {
+      const color = [0, 0, 0]
+      color[Math.floor(s / 3)] = 255
+      src.set([...color, 255], s * 4)
+    }
+    const out = new Uint8ClampedArray(3 * 4)
+    foldSubpixels(src, out, 3, 1)
+    // Each output channel only sees the same channel of its five nearest samples.
+    expect(out[0]).toBe(255) // red of the red pixel
+    expect(out[1]).toBe(49) // green of the red pixel: 8/256 of the green pixel
+    expect(out[8 + 0]).toBe(0) // red of the blue pixel: the red samples are out of reach
+    expect(out[4 + 1]).toBe(248) // green of the green pixel: 240/256, the outer samples being red and blue
+    expect(out[8 + 2]).toBe(255) // blue of the blue pixel
+  })
+
+  it('filters in linear light', () => {
+    // A white sample beside black ones: in linear light, 86/256 of white on the centre stripe is about 157 in sRGB,
+    // where a filter in sRGB values would give 86.
+    const [, middle] = fold([0, 0, 0, 0, 255, 0, 0, 0, 0])
+    expect(middle[1]).toBeGreaterThanOrEqual(155)
+    expect(middle[1]).toBeLessThanOrEqual(159)
+  })
+
   it('handles the image edges without reading outside', () => {
     const [first] = fold([255, 0, 0, 0, 0, 0])
     expect(first[0]).toBeGreaterThan(0)

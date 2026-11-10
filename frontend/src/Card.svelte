@@ -149,6 +149,16 @@
     if (selected) root.scrollIntoView({ block: 'nearest' })
   })
 
+  // A card that moves without redrawing realigns its canvas on device pixels once the layout is done.
+  $effect(() => {
+    const t = thumbnail
+    const ratio = dpr
+    void [rect.x, rect.y, rect.width, rect.height]
+    if (!t) return
+    const frame = requestAnimationFrame(() => t.align(ratio))
+    return () => cancelAnimationFrame(frame)
+  })
+
   function act(e: MouseEvent, action: (pid: number) => void): void {
     e.stopPropagation()
     onSelect(card.PID)
