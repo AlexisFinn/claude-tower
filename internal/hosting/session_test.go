@@ -465,7 +465,7 @@ func TestNameArgs(t *testing.T) {
 	if got := NameArgs(" \n"); got != nil {
 		t.Errorf("empty name: %q", got)
 	}
-	if got, want := NameArgs(" mon nom "), []string{"-n", "mon nom"}; !reflect.DeepEqual(got, want) {
+	if got, want := NameArgs(" mon nom "), []string{"--name=" + "mon nom"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
@@ -481,7 +481,7 @@ func TestNewSessionNameStaysOneArgument(t *testing.T) {
 	}
 	call := newSessionCall(rec)
 	i := indexOf(call, "exec-env")
-	if i < 0 || !reflect.DeepEqual(call[i+3:], []string{claude, "-n", name}) {
+	if i < 0 || !reflect.DeepEqual(call[i+3:], []string{claude, "--name=" + name}) {
 		t.Errorf("command: %q", call)
 	}
 }

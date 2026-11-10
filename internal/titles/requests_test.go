@@ -34,6 +34,9 @@ func TestScanRequestsKeepsTypedTextOnly(t *testing.T) {
 		`{"type":"user","isMeta":true,"message":{"content":"Caveat: ignoré"}}`,
 		userLine("<command-name>/clear</command-name>"),
 		userLine("<local-command-stdout>sortie</local-command-stdout>"),
+		userLine("[Request interrupted by user for tool use]"),
+		`{"type":"user","isCompactSummary":true,"isVisibleInTranscriptOnly":true,"message":{"content":"This session is being continued"}}`,
+		`{"type":"user","isSidechain":true,"message":{"content":"Brief d'un sous-agent"}}`,
 		`{"type":"user","message":{"content":[{"type":"text","text":"Ajoute un test"},{"type":"image","source":{}}]}}`,
 		`not json "user"`,
 		``,
@@ -55,14 +58,17 @@ func TestScanRequestsAddsLastPromptUnlessRepeated(t *testing.T) {
 		`{"type":"last-prompt","lastPrompt":"Première demande","sessionId":"s"}`,
 		userLine(long),
 		`{"type":"last-prompt","lastPrompt":"`+strings.Repeat("é", 200)+`"}`,
-		`{"type":"last-prompt","lastPrompt":"Première demande"}`,
 		`{"type":"last-prompt","lastPrompt":"Demande absente du transcript"}`,
+		userLine("oui merci"),
+		userLine("autre chose"),
+		// A short request that an older one starts with is a request of its own.
+		`{"type":"last-prompt","lastPrompt":"oui"}`,
 	)
 	got, err := ScanRequests(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Requests{Count: 3, Kept: []string{"Première demande", strings.Repeat("é", 300), "Demande absente du transcript"}}
+	want := Requests{Count: 6, Kept: []string{"Première demande", strings.Repeat("é", 300), "Demande absente du transcript", "oui"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %+v, want %+v", got, want)
 	}

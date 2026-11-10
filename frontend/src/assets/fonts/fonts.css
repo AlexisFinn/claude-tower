@@ -1,0 +1,25 @@
+/* Source Code Pro (SIL Open Font License, see SourceCodePro-LICENSE.md), bundled so that the thumbnails look the same everywhere. */
+@font-face {
+  font-family: 'Tower Mono';
+  src: url('./SourceCodePro-Regular.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'Tower Mono';
+  src: url('./SourceCodePro-Bold.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'Tower Mono';
+  src: url('./SourceCodePro-It.otf') format('opentype');
+  font-weight: 400;
+  font-style: italic;
+}
+@font-face {
+  font-family: 'Tower Mono';
+  src: url('./SourceCodePro-BoldIt.otf') format('opentype');
+  font-weight: 700;
+  font-style: italic;
+}

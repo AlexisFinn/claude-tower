@@ -441,9 +441,9 @@ func TestNewSessionNameBecomesNameArgument(t *testing.T) {
 	}{
 		{"", nil},
 		{" \t ", nil},
-		{`mon "nom" d'essai`, []string{"-n", `mon "nom" d'essai`}},
-		{"  avec espaces\n", []string{"-n", "avec espaces"}},
-		{strings.Repeat("x", 80), []string{"-n", strings.Repeat("x", 60)}},
+		{`mon "nom" d'essai`, []string{"--name=" + `mon "nom" d'essai`}},
+		{"  avec espaces\n", []string{"--name=" + "avec espaces"}},
+		{strings.Repeat("x", 80), []string{"--name=" + strings.Repeat("x", 60)}},
 	}
 	for _, tt := range tests {
 		e := newEnv(t)

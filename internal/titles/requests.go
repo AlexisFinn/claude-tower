@@ -28,10 +28,13 @@ type Requests struct {
 }
 
 type record struct {
-	Type       string `json:"type"`
-	IsMeta     bool   `json:"isMeta"`
-	LastPrompt string `json:"lastPrompt"`
-	Message    struct {
+	Type   string `json:"type"`
+	IsMeta bool   `json:"isMeta"`
+	// Compaction summaries and subagent messages are user records the user did not type.
+	IsCompactSummary bool   `json:"isCompactSummary"`
+	IsSidechain      bool   `json:"isSidechain"`
+	LastPrompt       string `json:"lastPrompt"`
+	Message          struct {
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
 }
@@ -81,7 +84,9 @@ func ScanRequests(path string) (Requests, error) {
 // cut to maxRequestRunes characters, "" when it holds none. isLastPrompt
 // reports a "last-prompt" record.
 func requestOf(line []byte) (text string, isLastPrompt bool) {
-	if !bytes.Contains(line, []byte(`"user"`)) && !bytes.Contains(line, []byte(`"last-prompt"`)) {
+	// Tool results are the bulk of a transcript: they are skipped before decoding.
+	if bytes.Contains(line, []byte(`"tool_use_id"`)) ||
+		(!bytes.Contains(line, []byte(`"user"`)) && !bytes.Contains(line, []byte(`"last-prompt"`))) {
 		return "", false
 	}
 	var rec record
@@ -91,9 +96,10 @@ func requestOf(line []byte) (text string, isLastPrompt bool) {
 	switch {
 	case rec.Type == "last-prompt":
 		return cut(normalize(rec.LastPrompt)), true
-	case rec.Type == "user" && !rec.IsMeta:
+	case rec.Type == "user" && !rec.IsMeta && !rec.IsCompactSummary && !rec.IsSidechain:
 		text = normalize(typedText(rec.Message.Content))
-		if strings.HasPrefix(text, "<") {
+		// "<" starts command records; "[Request interrupted" marks an interruption.
+		if strings.HasPrefix(text, "<") || strings.HasPrefix(text, "[Request interrupted") {
 			return "", false
 		}
 		return cut(text), false
@@ -124,15 +130,10 @@ func typedText(raw json.RawMessage) string {
 	return strings.Join(parts, "\n")
 }
 
-// repeats reports whether one of the requests starts with text, which is how
-// a "last-prompt" record repeats a request, possibly cut short.
+// repeats reports whether a "last-prompt" record is the latest request again,
+// possibly cut short.
 func repeats(requests []string, text string) bool {
-	for i := len(requests) - 1; i >= 0; i-- {
-		if strings.HasPrefix(requests[i], text) {
-			return true
-		}
-	}
-	return false
+	return len(requests) > 0 && strings.HasPrefix(requests[len(requests)-1], text)
 }
 
 func cut(text string) string {

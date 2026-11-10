@@ -189,7 +189,8 @@ func NameArgs(name string) []string {
 	if name = CleanName(name); name == "" {
 		return nil
 	}
-	return []string{"-n", name}
+	// One argument, so that a name starting with "-" is not read as an option.
+	return []string{"--name=" + name}
 }
 
 // NewSession starts Claude Code with args in a new session of the private

@@ -6,9 +6,18 @@ import { readRow, type BufferLike, type DrawCell, type Row } from './screenCells
 import { DEFAULT_BG } from './termPalette'
 import { cellBounds } from './thumbnailLayout'
 
-/** Font stack of the thumbnails: JetBrains Mono, which stays legible at small sizes, when installed, then the usual monospace fonts. */
-export const THUMBNAIL_FONT_FAMILY =
-  '"JetBrainsMono Nerd Font Mono", "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, "DejaVu Sans Mono", "Liberation Mono", monospace'
+/** Font stack of the thumbnails: the bundled Source Code Pro, then the usual monospace fonts. */
+export const THUMBNAIL_FONT_FAMILY = '"Tower Mono", ui-monospace, "DejaVu Sans Mono", "Liberation Mono", monospace'
+
+/**
+ * Loads the faces of the bundled font that the thumbnails draw with: a canvas
+ * draws with a fallback font, and measureFont caches its metrics, until they
+ * are loaded. A face that fails to load leaves the fallback fonts.
+ */
+export async function loadThumbnailFont(): Promise<void> {
+  const faces = ['12px', 'bold 12px', 'italic 12px', 'italic bold 12px'].map((f) => `${f} "Tower Mono"`)
+  await Promise.allSettled(faces.map((f) => document.fonts.load(f)))
+}
 
 const FALLBACK_ASCENT = 0.93
 const FALLBACK_DESCENT = 0.24
