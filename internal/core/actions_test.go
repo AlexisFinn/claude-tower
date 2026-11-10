@@ -253,9 +253,9 @@ func TestKillOnlyPrivateSessions(t *testing.T) {
 	}
 }
 
-// startSession starts a session through the Core and returns the content of
-// the environment file given to exec-env.
-func startSession(t *testing.T, e *env) string {
+// prepareClaude installs a fake claude command in the configuration of the
+// private server and returns its path.
+func prepareClaude(t *testing.T, e *env) string {
 	t.Helper()
 	claude := filepath.Join(t.TempDir(), "claude")
 	if err := os.WriteFile(claude, []byte("#!/bin/sh\n"), 0o755); err != nil {
@@ -267,6 +267,14 @@ func startSession(t *testing.T, e *env) string {
 	if err := os.WriteFile(filepath.Join(e.hosting.ConfigDir, "config.json"), []byte(`{"claudeCommand":["`+claude+`"]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	return claude
+}
+
+// startSession starts a session through the Core and returns the content of
+// the environment file given to exec-env.
+func startSession(t *testing.T, e *env) string {
+	t.Helper()
+	claude := prepareClaude(t, e)
 	e.fake.panes[e.privSock] = paneLine("%5", 77, "$3", "proj", "@3", "")
 	if err := e.core().NewSession(context.Background(), "/work/proj"); err != nil {
 		t.Fatal(err)

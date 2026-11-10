@@ -18,7 +18,8 @@ export function stateLabel(state: string, label: string): string {
     case 'idle':
       return 'Fini'
     case 'busy':
-      return label === 'shell' ? 'Shell' : 'Travaille'
+      if (label === 'shell') return 'Shell'
+      return label === 'démarrage' ? 'Démarre' : 'Travaille'
     case 'waiting':
       return waitingLabel(label)
     default:
@@ -33,6 +34,7 @@ const waitingReasons: Record<string, string> = {
   'sandbox request': 'Demande d’accès sandbox',
   'worker request': 'Demande d’un agent',
   'goal proposal': 'Propose un objectif',
+  démarrage: 'Bloquée au démarrage',
 }
 
 // The backend label of a waiting session is "attend" or "attend (<reason>)",

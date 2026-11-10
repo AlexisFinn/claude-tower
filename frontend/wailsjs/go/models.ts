@@ -72,6 +72,22 @@ export namespace core {
 	        this.Hash = source["Hash"];
 	    }
 	}
+	export class StartFailure {
+	    Name: string;
+	    Cwd: string;
+	    Lines: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new StartFailure(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Name = source["Name"];
+	        this.Cwd = source["Cwd"];
+	        this.Lines = source["Lines"];
+	    }
+	}
 
 }
 

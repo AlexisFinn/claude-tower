@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 
 	"claude-tower/internal/locate"
@@ -17,6 +18,12 @@ type snapshot struct {
 	clients  map[string][]tmux.Client // keyed by server socket
 	tree     locate.Tree
 	private  string
+	// pending lists the panes of the private server that host no registered
+	// session; panes also holds them, keyed by pane PID.
+	pending     []tmux.Pane
+	privateOK   bool            // the private server answered
+	privateGone bool            // the private server is not running
+	privateIDs  map[string]bool // IDs of every pane the private server listed
 }
 
 // serverState is what one server reported.
@@ -25,6 +32,7 @@ type serverState struct {
 	panes   []tmux.Pane
 	clients []tmux.Client
 	ok      bool
+	err     error // why the server did not answer
 }
 
 // refresh reads the registry, the tmux servers and the process tree, matches
@@ -35,6 +43,9 @@ func (c *Core) refresh(ctx context.Context) (snapshot, error) {
 		return snapshot{}, err
 	}
 	sortSessions(sessions)
+	c.mu.Lock()
+	seq := c.launchSeq
+	c.mu.Unlock()
 	private := c.privateSocket()
 	states := c.readServers(ctx, c.servers(private))
 	tree, err := c.opts.ReadTree(ctx, c.opts.Run)
@@ -43,19 +54,41 @@ func (c *Core) refresh(ctx context.Context) (snapshot, error) {
 	}
 	var panes []tmux.Pane
 	clients := map[string][]tmux.Client{}
+	privateOK, privateGone := false, false
+	privateIDs := map[string]bool{}
 	for _, st := range states {
 		if !st.ok {
+			if st.socket == private {
+				privateGone = serverNotRunning(st.err)
+			}
 			continue
+		}
+		if st.socket == private {
+			privateOK = true
+			for _, p := range st.panes {
+				privateIDs[p.ID] = true
+			}
 		}
 		panes = append(panes, st.panes...)
 		clients[st.socket] = st.clients
 	}
 	snap := snapshot{
-		sessions: sessions,
-		panes:    locate.Match(sessions, panes, tree),
-		clients:  clients,
-		tree:     tree,
-		private:  private,
+		sessions:    sessions,
+		panes:       locate.Match(sessions, panes, tree),
+		clients:     clients,
+		tree:        tree,
+		private:     private,
+		privateOK:   privateOK,
+		privateGone: privateGone,
+		privateIDs:  privateIDs,
+	}
+	// A pane whose PID is already a session's key would give two cards the
+	// same PID: it gets none.
+	for _, p := range pendingPanes(panes, snap.panes, private) {
+		if _, taken := snap.panes[p.PID]; !taken && !knownSession(snap, p.PID) {
+			snap.panes[p.PID] = p
+			snap.pending = append(snap.pending, p)
+		}
 	}
 	ids := make([]string, 0, len(sessions))
 	for _, s := range sessions {
@@ -65,6 +98,7 @@ func (c *Core) refresh(ctx context.Context) (snapshot, error) {
 	c.retainTrackers(ids)
 	c.mu.Lock()
 	c.snap = snap
+	c.updateLaunches(snap, seq)
 	c.mu.Unlock()
 	return snap, nil
 }
@@ -80,10 +114,12 @@ func (c *Core) readServers(ctx context.Context, servers []tmux.Server) []serverS
 			defer wg.Done()
 			panes, err := srv.Panes(ctx)
 			if err != nil {
+				states[i] = serverState{socket: srv.Socket, err: err}
 				return
 			}
 			clients, err := srv.Clients(ctx)
 			if err != nil {
+				states[i] = serverState{socket: srv.Socket, err: err}
 				return
 			}
 			states[i] = serverState{socket: srv.Socket, panes: panes, clients: clients, ok: true}
@@ -91,6 +127,16 @@ func (c *Core) readServers(ctx context.Context, servers []tmux.Server) []serverS
 	}
 	wg.Wait()
 	return states
+}
+
+// serverNotRunning reports whether err tells that no tmux server listens on
+// the socket, as opposed to a server that answers too slowly.
+func serverNotRunning(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "no server running") || strings.Contains(msg, "error connecting")
 }
 
 // sortSessions orders sessions by start time, then PID, which keeps the cards

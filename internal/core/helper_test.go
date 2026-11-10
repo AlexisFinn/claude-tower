@@ -222,7 +222,12 @@ func (e *env) transcript(id string, lines ...string) {
 }
 
 func paneLine(id string, pid int, sessionID, name, window string, group string) string {
-	return fmt.Sprintf("%s\t%d\t%s\t%s\t%s\t1\t%s\t80\t24\n", id, pid, sessionID, name, window, group)
+	return paneLineAt(id, pid, sessionID, name, window, group, testNow.Add(-time.Minute))
+}
+
+// paneLineAt is paneLine for a session created at the given time.
+func paneLineAt(id string, pid int, sessionID, name, window, group string, created time.Time) string {
+	return fmt.Sprintf("%s\t%d\t%s\t%s\t%s\t1\t%s\t80\t24\t%d\t/home/u/%s\n", id, pid, sessionID, name, window, group, created.Unix(), name)
 }
 
 func clientLine(name string, pid int, sessionID, sessionName, group string, activity int64) string {

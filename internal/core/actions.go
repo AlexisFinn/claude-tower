@@ -40,6 +40,7 @@ func (c *Core) Screen(ctx context.Context, pid, maxLines int) (Screen, error) {
 		return Screen{}, err
 	}
 	lines := tailLines(text, maxLines)
+	c.noteScreen(pane.ID, lines)
 	return Screen{Lines: lines, Width: width, Height: height, Hash: screenHash(lines, width, height)}, nil
 }
 
@@ -80,6 +81,9 @@ func (c *Core) Prompt(ctx context.Context, pid int, text string) error {
 	if err != nil {
 		return err
 	}
+	if c.isPending(pid) {
+		return errors.New("envoi refusé : la session démarre")
+	}
 	s, ok := c.opts.Registry.Session(pid)
 	if !ok {
 		return errors.New("la session n'existe plus")
@@ -113,8 +117,12 @@ func (c *Core) NewSession(ctx context.Context, dir string) error {
 		return errors.New("hébergement indisponible")
 	}
 	env := h.NewSessionEnv(ctx)
-	_, err := h.NewSession(ctx, dir, nil, env)
-	return err
+	pane, err := h.NewSession(ctx, dir, nil, env)
+	if err != nil {
+		return err
+	}
+	c.recordLaunch(pane, dir)
+	return nil
 }
 
 // Kill stops a session of the private server.
@@ -126,5 +134,12 @@ func (c *Core) Kill(ctx context.Context, pid int) error {
 	if err != nil {
 		return err
 	}
-	return c.opts.Hosting.Kill(ctx, pane)
+	// The launch is dropped before the kill, so that a refresh meanwhile does
+	// not report the killed session as a failed start.
+	l := c.takeLaunch(pane.ID)
+	if err := c.opts.Hosting.Kill(ctx, pane); err != nil {
+		c.restoreLaunch(pane.ID, l)
+		return err
+	}
+	return nil
 }

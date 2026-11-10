@@ -321,8 +321,8 @@ func TestTmuxLocations(t *testing.T) {
 	sessions := []registry.Session{{PID: 300}, {PID: 400}, {PID: 500}}
 	tree := locate.Tree{300: 200, 200: 100, 400: 450, 450: 1, 500: 600}
 	readTree := func(context.Context, tmux.Runner) (locate.Tree, error) { return tree, nil }
-	pub := tmux.Server{Socket: "/s/default", Run: fixedRunner("%1\t100\t$1\tmain\t@1\t1\t\t80\t24\n")}
-	priv := tmux.Server{Socket: "/s/private", Run: fixedRunner("%2\t600\t$2\tpriv\t@2\t1\t\t80\t24\n")}
+	pub := tmux.Server{Socket: "/s/default", Run: fixedRunner("%1\t100\t$1\tmain\t@1\t1\t\t80\t24\t1700000000\t/w\n")}
+	priv := tmux.Server{Socket: "/s/private", Run: fixedRunner("%2\t600\t$2\tpriv\t@2\t1\t\t80\t24\t1700000000\t/w\n")}
 	dead := tmux.Server{Socket: "/s/dead", Run: func(context.Context, io.Reader, string, ...string) ([]byte, error) {
 		return nil, errors.New("no server running")
 	}}

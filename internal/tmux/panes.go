@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ViewPrefix starts the name of every session created to show a pane in an
@@ -22,6 +23,8 @@ type Pane struct {
 	Active        bool   // pane_active
 	SessionGroup  string // session_group, "" when ungrouped
 	Width, Height int
+	Created       time.Time // session_created; zero when unknown
+	Cwd           string    // pane_current_path
 }
 
 // Client is one tmux client.
@@ -34,7 +37,7 @@ type Client struct {
 }
 
 const (
-	paneFormat   = "#{pane_id}\t#{pane_pid}\t#{session_id}\t#{session_name}\t#{window_id}\t#{pane_active}\t#{session_group}\t#{pane_width}\t#{pane_height}"
+	paneFormat   = "#{pane_id}\t#{pane_pid}\t#{session_id}\t#{session_name}\t#{window_id}\t#{pane_active}\t#{session_group}\t#{pane_width}\t#{pane_height}\t#{session_created}\t#{pane_current_path}"
 	clientFormat = "#{client_name}\t#{client_pid}\t#{session_id}\t#{session_name}\t#{session_group}\t#{client_activity}"
 )
 
@@ -48,12 +51,21 @@ func (s Server) Panes(ctx context.Context) ([]Pane, error) {
 	return parsePanes(s, string(out)), nil
 }
 
+func unixTime(s string) time.Time {
+	sec, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || sec <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(sec, 0)
+}
+
 func parsePanes(s Server, out string) []Pane {
 	var panes []Pane
 	seen := map[string]bool{}
 	for _, line := range strings.Split(out, "\n") {
-		f := strings.Split(line, "\t")
-		if len(f) != 9 || strings.HasPrefix(f[3], ViewPrefix) || seen[f[0]] {
+		// The path comes last, so that a tab in it stays in the path.
+		f := strings.SplitN(line, "\t", 11)
+		if len(f) != 11 || strings.HasPrefix(f[3], ViewPrefix) || seen[f[0]] {
 			continue
 		}
 		pid, err1 := strconv.Atoi(f[1])
@@ -66,6 +78,7 @@ func parsePanes(s Server, out string) []Pane {
 		panes = append(panes, Pane{
 			Server: s, ID: f[0], PID: pid, SessionID: f[2], SessionName: f[3],
 			WindowID: f[4], Active: f[5] == "1", SessionGroup: f[6], Width: w, Height: h,
+			Created: unixTime(f[9]), Cwd: f[10],
 		})
 	}
 	return panes

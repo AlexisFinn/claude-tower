@@ -49,6 +49,7 @@ type Engine interface {
 	Kill(ctx context.Context, pid int) error
 	PaneOf(pid int) (tmux.Pane, bool)
 	Sweep(ctx context.Context)
+	StartFailures() []core.StartFailure
 }
 
 // App holds the methods bound to the frontend. Startup and Shutdown, which
@@ -194,6 +195,16 @@ func (a *App) Cards() ([]core.Card, error) {
 	ctx, cancel := callContext()
 	defer cancel()
 	return e.Cards(ctx)
+}
+
+// StartFailures returns the sessions started by the application that ended
+// before Claude Code registered them, since the last call.
+func (a *App) StartFailures() ([]core.StartFailure, error) {
+	e, err := a.ready()
+	if err != nil {
+		return nil, err
+	}
+	return e.StartFailures(), nil
 }
 
 // Screen returns the bottom of the screen of a session.

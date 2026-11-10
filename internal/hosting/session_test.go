@@ -16,7 +16,7 @@ import (
 
 func init() { startupCheckDelay = 0 }
 
-const paneLine = "%7\t4242\t$5\tproj\t@3\t1\t\t200\t50\n"
+const paneLine = "%7\t4242\t$5\tproj\t@3\t1\t\t200\t50\t1700000000\t/proj\n"
 
 // sessionRecorder answers like a tmux server that starts one session.
 func sessionRecorder(duplicates int) *recorder {

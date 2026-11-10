@@ -34,6 +34,10 @@ export function Screen(arg1, arg2) {
   return window['go']['app']['App']['Screen'](arg1, arg2);
 }
 
+export function StartFailures() {
+  return window['go']['app']['App']['StartFailures']();
+}
+
 export function StartupError() {
   return window['go']['app']['App']['StartupError']();
 }

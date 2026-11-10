@@ -18,6 +18,8 @@ export function Prompt(arg1:number,arg2:string):Promise<void>;
 
 export function Screen(arg1:number,arg2:number):Promise<core.Screen>;
 
+export function StartFailures():Promise<Array<core.StartFailure>>;
+
 export function StartupError():Promise<string>;
 
 export function StartupWarning():Promise<string>;

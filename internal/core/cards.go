@@ -65,6 +65,9 @@ func (c *Core) Cards(ctx context.Context) ([]Card, error) {
 		card.CanPrompt = card.PromptReason == ""
 		cards = append(cards, card)
 	}
+	for _, p := range snap.pending {
+		cards = append(cards, c.pendingCard(p, len(cards), now, snap.clients[p.Server.Socket]))
+	}
 	return cards, nil
 }
 

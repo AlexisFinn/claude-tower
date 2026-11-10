@@ -7,6 +7,8 @@ describe('stateLabel', () => {
     expect(stateLabel('background', 'fini · fond')).toBe('Fini · tâches de fond')
     expect(stateLabel('busy', 'travaille')).toBe('Travaille')
     expect(stateLabel('busy', 'shell')).toBe('Shell')
+    expect(stateLabel('busy', 'démarrage')).toBe('Démarre')
+    expect(stateLabel('waiting', 'attend (démarrage)')).toBe('Bloquée au démarrage')
   })
 
   it('keeps what a waiting session waits for', () => {

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { Cards, Focus, Kill, NewSession, Screen } from '../wailsjs/go/app/App'
+  import { Cards, Focus, Kill, NewSession, Screen, StartFailures } from '../wailsjs/go/app/App'
   import type { core } from '../wailsjs/go/models'
   import AppBar from './AppBar.svelte'
   import Card from './Card.svelte'
@@ -20,6 +20,7 @@
   import { createRefresher } from './lib/refresher'
   import { createFailureTracker } from './lib/screenFailures'
   import { reconcileSelection } from './lib/selection'
+  import { startFailureText } from './lib/startFailures'
   import { summarizeStates } from './lib/summary'
   import { createToasts, type Toast, type ToastKind } from './lib/toasts'
 
@@ -118,6 +119,11 @@
       return
     }
     loaded = true
+    try {
+      for (const f of await StartFailures()) notify('error', startFailureText(f))
+    } catch {
+      // A failed read leaves the failures for the next cycle.
+    }
     const oldPids = cards.map((c) => c.PID)
     cards = list
     selected = reconcileSelection(

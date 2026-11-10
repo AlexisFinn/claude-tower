@@ -60,8 +60,11 @@ type Core struct {
 	opts   Options
 	finder *transcript.Finder
 
-	mu   sync.Mutex
-	snap snapshot
+	mu        sync.Mutex
+	snap      snapshot
+	launches  map[string]*launch // keyed by pane ID
+	launchSeq uint64
+	failures  []StartFailure
 
 	bgMu     sync.Mutex
 	trackers map[string]*background.Tracker // keyed by session ID
@@ -112,6 +115,7 @@ func New(opts Options) (*Core, error) {
 		opts:     opts,
 		finder:   transcript.NewFinder(opts.Registry.Dir),
 		trackers: map[string]*background.Tracker{},
+		launches: map[string]*launch{},
 	}, nil
 }
 

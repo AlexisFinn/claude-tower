@@ -125,13 +125,13 @@ func TestExecRunnerStdin(t *testing.T) {
 	}
 }
 
-const paneLines = "%1\t100\t$2\tclaude-tower-view-1-1\t@1\t1\t\t80\t24\n" +
-	"%1\t100\t$1\tmain\t@1\t1\t\t80\t24\n" +
-	"%2\t101\t$1\tmain\t@1\t0\t\t80\t24\n" +
-	"%3\t102\t$3\tg1\t@3\t1\tgrp\t120\t40\n" +
-	"%3\t102\t$4\tg2\t@3\t1\tgrp\t120\t40\n" +
+const paneLines = "%1\t100\t$2\tclaude-tower-view-1-1\t@1\t1\t\t80\t24\t1700000000\t/w\n" +
+	"%1\t100\t$1\tmain\t@1\t1\t\t80\t24\t1700000000\t/w\n" +
+	"%2\t101\t$1\tmain\t@1\t0\t\t80\t24\t1700000000\t/w\n" +
+	"%3\t102\t$3\tg1\t@3\t1\tgrp\t120\t40\t1700000000\t/w\tab\n" +
+	"%3\t102\t$4\tg2\t@3\t1\tgrp\t120\t40\t1700000000\t/w\tab\n" +
 	"broken line\n" +
-	"%9\tnotapid\t$1\tmain\t@1\t1\t\t80\t24\n"
+	"%9\tnotapid\t$1\tmain\t@1\t1\t\t80\t24\t1700000000\t/w\n"
 
 func TestPanesParsesExcludesViewsAndDeduplicates(t *testing.T) {
 	r := &recorder{reply: func([]string) ([]byte, error) { return []byte(paneLines), nil }}
@@ -158,7 +158,10 @@ func TestPanesParsesExcludesViewsAndDeduplicates(t *testing.T) {
 	if panes[1].Active {
 		t.Error("%2 must be inactive")
 	}
-	if p3.SessionID != "$3" || p3.SessionGroup != "grp" || p3.Width != 120 || p3.Height != 40 {
+	if !p1.Created.Equal(time.Unix(1700000000, 0)) || p1.Cwd != "/w" {
+		t.Errorf("pane %%1 created %v cwd %q", p1.Created, p1.Cwd)
+	}
+	if p3.SessionID != "$3" || p3.SessionGroup != "grp" || p3.Width != 120 || p3.Height != 40 || p3.Cwd != "/w\tab" {
 		t.Errorf("pane %%3: %+v", p3)
 	}
 }

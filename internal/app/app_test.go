@@ -31,6 +31,9 @@ func (f *fakeEngine) NewSession(_ context.Context, dir string) error {
 func (f *fakeEngine) Kill(context.Context, int) error { return nil }
 func (f *fakeEngine) PaneOf(int) (tmux.Pane, bool)    { return tmux.Pane{}, false }
 func (f *fakeEngine) Sweep(context.Context)           {}
+func (f *fakeEngine) StartFailures() []core.StartFailure {
+	return []core.StartFailure{{Name: "proj"}}
+}
 
 type fakeDialogs struct {
 	dir string
@@ -103,6 +106,9 @@ func TestMethodsFailWithStartupError(t *testing.T) {
 	if err := a.CloseTerminal(1); err == nil {
 		t.Error("CloseTerminal succeeded")
 	}
+	if _, err := a.StartFailures(); err == nil {
+		t.Error("StartFailures succeeded")
+	}
 	Shutdown(a)
 }
 
@@ -115,6 +121,14 @@ func TestCardsAreForwarded(t *testing.T) {
 	}
 	if a.StartupError() != "" {
 		t.Errorf("StartupError: %q", a.StartupError())
+	}
+}
+
+func TestStartFailuresAreForwarded(t *testing.T) {
+	a := started(&fakeEngine{}, fakeDialogs{})
+	got, err := a.StartFailures()
+	if err != nil || len(got) != 1 || got[0].Name != "proj" {
+		t.Errorf("got %v %v", got, err)
 	}
 }
 
