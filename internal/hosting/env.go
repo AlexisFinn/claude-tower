@@ -58,6 +58,17 @@ func envHas(env []string, name string) bool {
 	return false
 }
 
+// unsetEnv returns env without the entries of name.
+func unsetEnv(env []string, name string) []string {
+	out := make([]string, 0, len(env))
+	for _, e := range env {
+		if envName(e) != name {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // setEnv returns env with name set to value, replacing any earlier entry.
 func setEnv(env []string, name, value string) []string {
 	out := make([]string, 0, len(env)+1)
@@ -70,11 +81,12 @@ func setEnv(env []string, name, value string) []string {
 }
 
 // SessionEnv returns base without the variables that describe the terminal of
-// the caller. A non-empty configDir becomes CLAUDE_CONFIG_DIR.
+// the caller, nor an empty CLAUDE_CONFIG_DIR. A non-empty configDir becomes
+// CLAUDE_CONFIG_DIR.
 func SessionEnv(base []string, configDir string) []string {
 	out := make([]string, 0, len(base)+1)
 	for _, e := range base {
-		if !terminalVars[envName(e)] {
+		if !terminalVars[envName(e)] && e != "CLAUDE_CONFIG_DIR=" {
 			out = append(out, e)
 		}
 	}
@@ -168,6 +180,10 @@ func mergeEnv(base, under []string) []string {
 // that app lacks. PATH lists the entries of the shell's PATH first, then those
 // of app's PATH the shell's lacks.
 func mergeLoginEnv(app, shell []string) []string {
+	// An empty CLAUDE_CONFIG_DIR counts as unset and leaves the login shell's.
+	if envValue(app, "CLAUDE_CONFIG_DIR") == "" {
+		app = unsetEnv(app, "CLAUDE_CONFIG_DIR")
+	}
 	out := mergeEnv(app, shell)
 	if !envHas(app, "PATH") || !envHas(shell, "PATH") {
 		return out
@@ -239,6 +255,33 @@ func (h *Hosting) AppEnv(ctx context.Context) []string {
 		return env
 	}
 	return h.Env
+}
+
+// ResolveClaudeConfigDir sets ClaudeConfigDir and SessionConfigDir to the
+// non-empty CLAUDE_CONFIG_DIR of AppEnv when neither the environment of the
+// application nor config.json sets one. Without a terminal, this runs the
+// login shell.
+func (h *Hosting) ResolveClaudeConfigDir(ctx context.Context) {
+	if h.SessionConfigDir != "" {
+		return
+	}
+	if dir := envValue(h.AppEnv(ctx), "CLAUDE_CONFIG_DIR"); dir != "" {
+		h.ClaudeConfigDir = dir
+		h.SessionConfigDir = dir
+	}
+}
+
+// NewSessionEnv returns the environment of a session started by the
+// application: AppEnv with a UTF-8 locale and without the terminal variables
+// of the caller. CLAUDE_CONFIG_DIR is SessionConfigDir, or absent when that is
+// empty, so that the session always writes to the registry the application
+// reads, even when the login shell sets it after ResolveClaudeConfigDir failed.
+func (h *Hosting) NewSessionEnv(ctx context.Context) []string {
+	env := SessionEnv(WithUTF8Locale(h.AppEnv(ctx)), h.SessionConfigDir)
+	if h.SessionConfigDir == "" {
+		env = unsetEnv(env, "CLAUDE_CONFIG_DIR")
+	}
+	return env
 }
 
 // WriteEnvFile writes env to a new file in the private socket directory and

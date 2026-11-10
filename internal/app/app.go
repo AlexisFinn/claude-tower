@@ -17,6 +17,9 @@ import (
 
 const (
 	callTimeout = 30 * time.Second
+	// resolveTimeout bounds the login shell run at startup, within the
+	// callTimeout of the whole Startup.
+	resolveTimeout = 10 * time.Second
 	// startWait is how long a method waits for Startup to finish.
 	startWait = 30 * time.Second
 )
@@ -92,13 +95,16 @@ func (a *App) start() {
 		a.startErr = err
 		return
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+	defer cancel()
+	rctx, rcancel := context.WithTimeout(ctx, resolveTimeout)
+	h.ResolveClaudeConfigDir(rctx)
+	rcancel()
 	c, err := core.New(core.Options{Hosting: h})
 	if err != nil {
 		a.startErr = err
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
-	defer cancel()
 	if err := h.EnsureConfig(ctx); err != nil {
 		a.startWarn = err.Error()
 	}

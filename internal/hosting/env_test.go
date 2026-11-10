@@ -193,6 +193,76 @@ func TestAppEnv(t *testing.T) {
 	}
 }
 
+func TestSessionEnvDropsEmptyConfigDir(t *testing.T) {
+	got := SessionEnv([]string{"A=1", "CLAUDE_CONFIG_DIR="}, "")
+	if !reflect.DeepEqual(got, []string{"A=1"}) {
+		t.Errorf("got %v", got)
+	}
+}
+
+func TestResolveClaudeConfigDir(t *testing.T) {
+	login := "CLAUDE_CONFIG_DIR=/login\x00"
+	rec := &recorder{reply: func(string, []string) ([]byte, error) { return []byte(login), nil }}
+	cases := []struct {
+		name    string
+		env     []string
+		session string
+		login   string
+		want    string
+	}{
+		{"login shell value without terminal", []string{"A=1"}, "", "CLAUDE_CONFIG_DIR=/login\x00", "/login"},
+		{"empty login shell value", []string{"A=1"}, "", "CLAUDE_CONFIG_DIR=\x00", "/default"},
+		{"absent from login shell", []string{"A=1"}, "", "B=2\x00", "/default"},
+		{"empty value of the application counts as unset", []string{"A=1", "CLAUDE_CONFIG_DIR="}, "", "CLAUDE_CONFIG_DIR=/login\x00", "/login"},
+		{"explicit value kept", []string{"A=1"}, "/explicit", "CLAUDE_CONFIG_DIR=/login\x00", "/explicit"},
+		{"terminal environment only", []string{"TERM=xterm"}, "", "CLAUDE_CONFIG_DIR=/login\x00", "/default"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			login = c.login
+			h := newHosting(t, rec)
+			h.Env = c.env
+			h.SessionConfigDir = c.session
+			h.ClaudeConfigDir = "/default"
+			if c.session != "" {
+				h.ClaudeConfigDir = c.session
+			}
+			h.ResolveClaudeConfigDir(context.Background())
+			session := c.session
+			if c.want != "/default" {
+				session = c.want
+			}
+			if h.ClaudeConfigDir != c.want || h.SessionConfigDir != session {
+				t.Errorf("ClaudeConfigDir %q SessionConfigDir %q", h.ClaudeConfigDir, h.SessionConfigDir)
+			}
+		})
+	}
+}
+
+func TestNewSessionEnvMatchesRegistryDir(t *testing.T) {
+	rec := &recorder{reply: func(string, []string) ([]byte, error) { return []byte("CLAUDE_CONFIG_DIR=/login\x00"), nil }}
+	h := newHosting(t, rec)
+	h.Env = []string{"A=1"}
+	if got := h.NewSessionEnv(context.Background()); contains(got, "CLAUDE_CONFIG_DIR=/login") {
+		t.Errorf("unresolved login shell directory passed on: %v", got)
+	}
+	h.SessionConfigDir = "/explicit"
+	if got := h.NewSessionEnv(context.Background()); !contains(got, "CLAUDE_CONFIG_DIR=/explicit") {
+		t.Errorf("explicit directory missing: %v", got)
+	}
+}
+
+func TestResolveClaudeConfigDirShellFailure(t *testing.T) {
+	rec := &recorder{reply: func(string, []string) ([]byte, error) { return nil, errors.New("boom") }}
+	h := newHosting(t, rec)
+	h.Env = []string{"A=1"}
+	h.ClaudeConfigDir = "/default"
+	h.ResolveClaudeConfigDir(context.Background())
+	if h.ClaudeConfigDir != "/default" || h.SessionConfigDir != "" {
+		t.Errorf("ClaudeConfigDir %q SessionConfigDir %q", h.ClaudeConfigDir, h.SessionConfigDir)
+	}
+}
+
 func TestWriteAndReadEnvFile(t *testing.T) {
 	h := newHosting(t, &recorder{})
 	path, err := h.WriteEnvFile([]string{"A=1", "B=x y"})
