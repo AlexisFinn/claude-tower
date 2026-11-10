@@ -235,7 +235,6 @@ func newEnv(t *testing.T) *env {
 func (e *env) core(opts ...func(*Options)) *Core {
 	e.t.Helper()
 	o := Options{
-		Hosting:       e.hosting,
 		Home:          "/home/u",
 		UserSocketDir: filepath.Dir(e.userSock),
 		Bin:           "tmux",
@@ -247,6 +246,9 @@ func (e *env) core(opts ...func(*Options)) *Core {
 		Raise:     func(pids []int) error { e.raised = append(e.raised, pids); return e.raiseErr },
 		Supported: func() bool { return e.supports },
 		Now:       func() time.Time { return testNow },
+	}
+	if e.hosting != nil {
+		o.Hosting = e.hosting
 	}
 	o.Registry.Dir = e.cfgDir
 	o.Registry.Alive = func(pid int, _ string) bool { return e.alive[pid] }

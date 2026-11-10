@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"claude-tower/internal/hosting"
 	"claude-tower/internal/locate"
 	"claude-tower/internal/registry"
 	"claude-tower/internal/tmux"
@@ -289,7 +288,7 @@ func TestPaneOf(t *testing.T) {
 
 func TestNewDefaultsRegistryDirectory(t *testing.T) {
 	e := newEnv(t)
-	build := func(h *hosting.Hosting, home string) *Core {
+	build := func(h Host, home string) *Core {
 		t.Helper()
 		c, err := New(Options{Bin: "tmux", Run: e.fake.run, Hosting: h, Home: home})
 		if err != nil {

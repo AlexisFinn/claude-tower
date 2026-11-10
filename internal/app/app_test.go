@@ -21,6 +21,7 @@ type fakeEngine struct {
 	newNames    []string
 	cards       []core.Card
 	onSweep     func()
+	closed      bool
 }
 
 func (f *fakeEngine) Cards(context.Context) ([]core.Card, error) { return f.cards, nil }
@@ -39,6 +40,7 @@ func (f *fakeEngine) NewSession(_ context.Context, dir, name string) error {
 func (f *fakeEngine) Kill(context.Context, int) error                  { return nil }
 func (f *fakeEngine) Fit(context.Context, int, int, int) (bool, error) { return true, nil }
 func (f *fakeEngine) PaneOf(int) (tmux.Pane, bool)                     { return tmux.Pane{}, false }
+func (f *fakeEngine) Close()                                           { f.closed = true }
 func (f *fakeEngine) Sweep(context.Context) {
 	if f.onSweep != nil {
 		f.onSweep()
@@ -372,5 +374,14 @@ func TestStartConfigErrorIsAWarningAndDoesNotBlock(t *testing.T) {
 	}
 	if _, err := a.Cards(); err != nil {
 		t.Errorf("Cards: %v", err)
+	}
+}
+
+func TestShutdownClosesEngine(t *testing.T) {
+	e := &fakeEngine{}
+	a := started(e, fakeDialogs{})
+	Shutdown(a)
+	if !e.closed {
+		t.Error("engine not closed")
 	}
 }

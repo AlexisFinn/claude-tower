@@ -26,9 +26,10 @@ type Options struct {
 	// directory of Hosting when it has one, else $CLAUDE_CONFIG_DIR, else
 	// .claude in Home. Alive and ReadFile keep the defaults of registry.Reader.
 	Registry registry.Reader
-	// Hosting runs and stops the sessions of the private server. Without it,
-	// there is no private server and NewSession and Kill fail.
-	Hosting *hosting.Hosting
+	// Hosting runs and stops the sessions of the private server. Without it
+	// (a nil interface), there is no private server and NewSession and Kill
+	// fail.
+	Hosting Host
 	// Home shortens the paths shown. Default: the user's home directory.
 	Home string
 	// UserSocketDir holds the sockets of the user's tmux servers. Default:
@@ -58,24 +59,49 @@ type Options struct {
 	Now func() time.Time
 }
 
+// Host is what Core uses of the private server's host. *hosting.Hosting
+// implements it.
+type Host interface {
+	NewSessionEnv(ctx context.Context) []string
+	NewSession(ctx context.Context, dir string, args, env []string) (tmux.Pane, error)
+	NewAttachSession(ctx context.Context, dir, id string, env []string) (tmux.Pane, error)
+	StopBackground(ctx context.Context, id string, env []string) error
+	Kill(ctx context.Context, pane tmux.Pane) error
+	PrivateSocket() (string, error)
+	SweepEnvFiles(now time.Time) error
+	UserSocketDir(uid int) string
+	ClaudeDir() string
+}
+
+var _ Host = (*hosting.Hosting)(nil)
+
 // Core is safe for concurrent use.
+//
+// Every piece of mutable state has its own lock, and no goroutine holds two of
+// them at once, so that no acquisition order exists to respect:
+//   - snapMu protects snap; the snapshot is replaced as a whole and read by
+//     value.
+//   - launches and attachments hold their own lock; they receive the snapshot
+//     as an argument and never reach for snapMu.
+//   - bgMu protects trackers.
+//
+// opts and finder never change after New (the finder has its own lock).
 type Core struct {
 	opts   Options
 	finder *transcript.Finder
 
-	mu        sync.Mutex
-	snap      snapshot
-	launches  map[string]*launch // keyed by pane ID
-	launchSeq uint64
-	failures  []StartFailure
+	snapMu sync.Mutex
+	snap   snapshot
 
-	attaching   map[string]bool          // background ids whose attach session is being created
-	attachTried map[string]attachAttempt // attach attempts, per background id
-	unneeded    map[string]int           // consecutive snapshots an attach pane was unneeded, per pane ID
-	removing    map[string]bool          // attach panes being removed, per pane ID
+	launches    *launchTracker
+	attachments *attachTracker
 
 	bgMu     sync.Mutex
 	trackers map[string]*background.Tracker // keyed by session ID
+
+	// bgCtx bounds the attach and removal goroutines; Close cancels it.
+	bgCtx    context.Context
+	bgCancel context.CancelFunc
 }
 
 // New checks that tmux is installed and recent enough, and returns a Core.
@@ -122,29 +148,37 @@ func New(opts Options) (*Core, error) {
 	if opts.Registry.Dir == "" {
 		opts.Registry.Dir = defaultRegistryDir(opts.Hosting, opts.Home)
 	}
+	bgCtx, bgCancel := context.WithCancel(context.Background())
 	return &Core{
-		opts:     opts,
-		finder:   transcript.NewFinder(opts.Registry.Dir),
-		trackers: map[string]*background.Tracker{},
-		launches: map[string]*launch{},
-
-		attaching:   map[string]bool{},
-		attachTried: map[string]attachAttempt{},
-		unneeded:    map[string]int{},
-		removing:    map[string]bool{},
+		opts:        opts,
+		finder:      transcript.NewFinder(opts.Registry.Dir),
+		trackers:    map[string]*background.Tracker{},
+		launches:    newLaunchTracker(),
+		attachments: newAttachTracker(),
+		bgCtx:       bgCtx,
+		bgCancel:    bgCancel,
 	}, nil
 }
 
-func defaultUserSocketDir(h *hosting.Hosting) string {
+// Close stops the attach and removal of attach sessions: it cancels those in
+// flight, waits for them, and makes later refreshes start none. It is safe to
+// call more than once.
+func (c *Core) Close() {
+	c.attachments.close()
+	c.bgCancel()
+	c.attachments.wait()
+}
+
+func defaultUserSocketDir(h Host) string {
 	if h != nil {
 		return h.UserSocketDir(os.Getuid())
 	}
 	return tmux.SocketDir(os.Getenv("TMUX_TMPDIR"), os.Getuid())
 }
 
-func defaultRegistryDir(h *hosting.Hosting, home string) string {
-	if h != nil && h.ClaudeConfigDir != "" {
-		return h.ClaudeConfigDir
+func defaultRegistryDir(h Host, home string) string {
+	if h != nil && h.ClaudeDir() != "" {
+		return h.ClaudeDir()
 	}
 	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
 		return dir
@@ -184,8 +218,8 @@ func (c *Core) Sweep(ctx context.Context) {
 // PaneOf returns the pane hosting the session with the given PID, as of the
 // last snapshot.
 func (c *Core) PaneOf(pid int) (tmux.Pane, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.snapMu.Lock()
+	defer c.snapMu.Unlock()
 	p, ok := c.snap.panes[pid]
 	return p, ok
 }

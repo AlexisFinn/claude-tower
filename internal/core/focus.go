@@ -45,9 +45,9 @@ func planFocus(inTmux bool, clients []tmux.Client, supported bool) focusPlan {
 // for the embedded terminal, with the reason in Warning, and switches no
 // client.
 func (c *Core) Focus(ctx context.Context, pid int) (FocusResult, error) {
-	c.mu.Lock()
+	c.snapMu.Lock()
 	snap := c.snap
-	c.mu.Unlock()
+	c.snapMu.Unlock()
 	pane, inTmux := snap.panes[pid]
 	if !inTmux && !knownSession(snap, pid) {
 		return FocusResult{}, errors.New("session inconnue")

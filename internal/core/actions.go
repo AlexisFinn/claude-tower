@@ -10,6 +10,7 @@ import (
 
 	"claude-tower/internal/hosting"
 	"claude-tower/internal/tmux"
+	"claude-tower/internal/view"
 
 	"github.com/charmbracelet/x/ansi"
 )
@@ -41,7 +42,7 @@ func (c *Core) Screen(ctx context.Context, pid, maxLines int) (Screen, error) {
 		return Screen{}, err
 	}
 	lines := tailLines(text, maxLines)
-	c.noteScreen(pane.ID, lines)
+	c.launches.noteScreen(pane.ID, lines)
 	return Screen{Lines: lines, Width: width, Height: height, Hash: screenHash(lines, width, height)}, nil
 }
 
@@ -123,7 +124,7 @@ func (c *Core) NewSession(ctx context.Context, dir, name string) error {
 	if err != nil {
 		return err
 	}
-	c.recordLaunch(pane, dir)
+	c.launches.record(pane, view.ShortPath(dir, c.opts.Home))
 	return nil
 }
 
@@ -182,9 +183,9 @@ func (c *Core) Kill(ctx context.Context, pid int) error {
 	if c.opts.Hosting == nil {
 		return errors.New("hébergement indisponible")
 	}
-	c.mu.Lock()
+	c.snapMu.Lock()
 	id, background := c.snap.background[pid]
-	c.mu.Unlock()
+	c.snapMu.Unlock()
 	if background {
 		h := c.opts.Hosting
 		return h.StopBackground(ctx, id, h.NewSessionEnv(ctx))
@@ -195,9 +196,9 @@ func (c *Core) Kill(ctx context.Context, pid int) error {
 	}
 	// The launch is dropped before the kill, so that a refresh meanwhile does
 	// not report the killed session as a failed start.
-	l := c.takeLaunch(pane.ID)
+	l := c.launches.take(pane.ID)
 	if err := c.opts.Hosting.Kill(ctx, pane); err != nil {
-		c.restoreLaunch(pane.ID, l)
+		c.launches.restore(pane.ID, l)
 		return err
 	}
 	return nil

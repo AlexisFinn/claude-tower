@@ -49,9 +49,7 @@ func (c *Core) refresh(ctx context.Context) (snapshot, error) {
 		return snapshot{}, err
 	}
 	sortSessions(sessions)
-	c.mu.Lock()
-	seq := c.launchSeq
-	c.mu.Unlock()
+	seq := c.launches.sequence()
 	private := c.privateSocket()
 	states := c.readServers(ctx, c.servers(private))
 	tree, err := c.opts.ReadTree(ctx, c.opts.Run)
@@ -114,10 +112,10 @@ func (c *Core) refresh(ctx context.Context) (snapshot, error) {
 	}
 	c.finder.Retain(ids)
 	c.retainTrackers(ids)
-	c.mu.Lock()
+	c.snapMu.Lock()
 	c.snap = snap
-	c.updateLaunches(snap, seq)
-	c.mu.Unlock()
+	c.snapMu.Unlock()
+	c.launches.update(snap, seq)
 	return snap, nil
 }
 

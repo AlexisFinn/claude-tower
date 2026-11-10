@@ -61,6 +61,7 @@ type Engine interface {
 	PaneOf(pid int) (tmux.Pane, bool)
 	Sweep(ctx context.Context)
 	StartFailures() []core.StartFailure
+	Close()
 }
 
 // App holds the methods bound to the frontend. Startup and Shutdown, which
@@ -143,7 +144,7 @@ func (a *App) setEngine(e Engine) {
 	a.terms = ptyterm.NewManager(e, a.emit, a.environ)
 }
 
-// Shutdown closes every embedded terminal.
+// Shutdown closes every embedded terminal and stops the engine.
 func Shutdown(a *App) {
 	select {
 	case <-a.started:
@@ -152,6 +153,9 @@ func Shutdown(a *App) {
 	}
 	if a.terms != nil {
 		a.terms.CloseAll()
+	}
+	if a.engine != nil {
+		a.engine.Close()
 	}
 }
 

@@ -141,17 +141,14 @@ func TestCardsStartAttachSession(t *testing.T) {
 	if _, err := c.Cards(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		for _, cmd := range e.fake.newSessions(e.privSock) {
-			if i := indexOf(cmd, "-s"); i >= 0 && cmd[i+1] == tmux.AttachPrefix+"504d303c" {
-				if !reflect.DeepEqual(cmd[len(cmd)-2:], []string{"attach", "504d303c"}) {
-					t.Errorf("command: %v", cmd)
-				}
-				return
+	c.wait()
+	for _, cmd := range e.fake.newSessions(e.privSock) {
+		if i := indexOf(cmd, "-s"); i >= 0 && cmd[i+1] == tmux.AttachPrefix+"504d303c" {
+			if !reflect.DeepEqual(cmd[len(cmd)-2:], []string{"attach", "504d303c"}) {
+				t.Errorf("command: %v", cmd)
 			}
+			return
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("no attach session started: %v", e.fake.calls)
 }
@@ -212,19 +209,16 @@ func TestOrphanAttachSessionRemovedAfterTwoSnapshots(t *testing.T) {
 	if _, err := c.Cards(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(50 * time.Millisecond)
+	c.wait()
 	if e.fake.has(e.privSock, "kill-session") {
 		t.Fatal("removed after a single snapshot")
 	}
 	if _, err := c.Cards(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for !e.fake.has(e.privSock, "kill-session") {
-		if time.Now().After(deadline) {
-			t.Fatal("orphan attach session kept")
-		}
-		time.Sleep(10 * time.Millisecond)
+	c.wait()
+	if !e.fake.has(e.privSock, "kill-session") {
+		t.Fatal("orphan attach session kept")
 	}
 }
 
@@ -252,5 +246,59 @@ func TestAttachmentsReadOnlyWithBackgroundSessions(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Errorf("attachments reads with a background session: %d", calls)
+	}
+}
+
+func TestAttachTrackerSchedule(t *testing.T) {
+	priv := "/priv.sock"
+	srv := tmux.Server{Socket: priv}
+	orphan := tmux.Pane{Server: srv, ID: "%8", SessionName: tmux.AttachPrefix + "gone0000"}
+	snap := snapshot{
+		sessions:      []registry.Session{{PID: 2, SessionID: "bbbbbbbb-2"}},
+		private:       priv,
+		panes:         map[int]tmux.Pane{},
+		background:    map[int]string{2: "bbbbbbbb"},
+		listedPrivate: []tmux.Pane{orphan},
+		userComplete:  true,
+	}
+	now := time.Unix(1000, 0)
+	tr := newAttachTracker()
+
+	create, remove := tr.schedule(snap, now)
+	if len(create) != 1 || create[0].PID != 2 || len(remove) != 0 {
+		t.Fatalf("first snapshot: create %+v remove %+v", create, remove)
+	}
+	// The creation is in progress: the next snapshot starts nothing for it,
+	// and the orphan has now been unneeded twice.
+	create, remove = tr.schedule(snap, now.Add(time.Minute))
+	if len(create) != 0 || !reflect.DeepEqual(remove, []tmux.Pane{orphan}) {
+		t.Fatalf("second snapshot: create %+v remove %+v", create, remove)
+	}
+	// The removal is in progress too.
+	if create, remove = tr.schedule(snap, now.Add(2*time.Minute)); len(create) != 0 || len(remove) != 0 {
+		t.Fatalf("third snapshot: create %+v remove %+v", create, remove)
+	}
+	tr.attachDone("bbbbbbbb")
+	tr.removeDone(orphan.ID)
+	tr.wait()
+	if len(tr.attaching) != 0 || len(tr.removing) != 0 {
+		t.Errorf("work left: %v %v", tr.attaching, tr.removing)
+	}
+}
+
+func TestCloseStopsAttachWork(t *testing.T) {
+	e := newEnv(t)
+	prepareClaude(t, e)
+	bgSession(e)
+	e.tree = locate.Tree{500: 400, 400: 1}
+	c := e.core()
+	c.Close()
+	c.Close()
+	if _, err := c.Cards(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	c.wait()
+	if got := e.fake.newSessions(e.privSock); len(got) != 0 {
+		t.Errorf("attach session started after Close: %v", got)
 	}
 }

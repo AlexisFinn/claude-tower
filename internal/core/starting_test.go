@@ -176,12 +176,10 @@ func TestKilledLaunchIsNotAFailure(t *testing.T) {
 func TestFailedKillKeepsFollowingLaunch(t *testing.T) {
 	e := newEnv(t)
 	c := e.core()
-	c.recordLaunch(tmux.Pane{ID: "%5", SessionName: "proj"}, "/home/u/proj")
-	l := c.takeLaunch("%5")
-	c.restoreLaunch("%5", l)
-	c.mu.Lock()
-	c.updateLaunches(snapshot{private: e.privSock, privateGone: true}, 1)
-	c.mu.Unlock()
+	c.launches.record(tmux.Pane{ID: "%5", SessionName: "proj"}, "~/proj")
+	l := c.launches.take("%5")
+	c.launches.restore("%5", l)
+	c.launches.update(snapshot{private: e.privSock, privateGone: true}, 1)
 	if got := c.StartFailures(); len(got) != 1 {
 		t.Errorf("restored launch not followed: %+v", got)
 	}
@@ -190,19 +188,15 @@ func TestFailedKillKeepsFollowingLaunch(t *testing.T) {
 func TestUpdateLaunchesWaitsForLaterListingAndTransientErrors(t *testing.T) {
 	e := newEnv(t)
 	c := e.core()
-	c.recordLaunch(tmux.Pane{ID: "%5", SessionName: "proj"}, "/home/u/proj")
-	c.mu.Lock()
+	c.launches.record(tmux.Pane{ID: "%5", SessionName: "proj"}, "~/proj")
 	// The listing began before the launch was recorded: the pane may be missing.
-	c.updateLaunches(snapshot{private: e.privSock, privateOK: true}, 0)
+	c.launches.update(snapshot{private: e.privSock, privateOK: true}, 0)
 	// The private server fails without being gone.
-	c.updateLaunches(snapshot{private: e.privSock}, 1)
-	c.mu.Unlock()
+	c.launches.update(snapshot{private: e.privSock}, 1)
 	if got := c.StartFailures(); len(got) != 0 {
 		t.Errorf("failure reported too early: %+v", got)
 	}
-	c.mu.Lock()
-	c.updateLaunches(snapshot{private: e.privSock, privateGone: true}, 1)
-	c.mu.Unlock()
+	c.launches.update(snapshot{private: e.privSock, privateGone: true}, 1)
 	if got := c.StartFailures(); len(got) != 1 {
 		t.Errorf("failure missing once the server is gone: %+v", got)
 	}

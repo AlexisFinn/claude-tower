@@ -3,6 +3,7 @@ package core
 import (
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"claude-tower/internal/tmux"
@@ -32,7 +33,7 @@ type StartFailure struct {
 // it or it ends.
 type launch struct {
 	name, cwd string
-	seq       uint64   // value of Core.launchSeq when the launch was recorded
+	seq       uint64   // value of launchTracker.seq when the launch was recorded
 	lines     []string // last screen lines seen, without escape sequences
 }
 
@@ -63,41 +64,64 @@ func pendingPanes(panes []tmux.Pane, matched map[int]tmux.Pane, private string) 
 	return out
 }
 
-// recordLaunch follows the pane that NewSession has just created.
-func (c *Core) recordLaunch(pane tmux.Pane, dir string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.launchSeq++
-	c.launches[pane.ID] = &launch{name: pane.SessionName, cwd: view.ShortPath(dir, c.opts.Home), seq: c.launchSeq}
+// launchTracker follows the sessions started by the application until Claude
+// Code registers them or they end, and collects the starts that failed. It is
+// safe for concurrent use; its lock is independent of every other lock of Core.
+type launchTracker struct {
+	mu       sync.Mutex
+	launches map[string]*launch // keyed by pane ID
+	seq      uint64             // number of launches recorded so far
+	failures []StartFailure
 }
 
-// takeLaunch stops following a pane and returns its launch, nil when the pane
-// was not followed.
-func (c *Core) takeLaunch(paneID string) *launch {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	l := c.launches[paneID]
-	delete(c.launches, paneID)
+func newLaunchTracker() *launchTracker {
+	return &launchTracker{launches: map[string]*launch{}}
+}
+
+// record follows the pane that NewSession has just created; cwd is the
+// directory as shown to the user.
+func (t *launchTracker) record(pane tmux.Pane, cwd string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.seq++
+	t.launches[pane.ID] = &launch{name: pane.SessionName, cwd: cwd, seq: t.seq}
+}
+
+// sequence returns the sequence number of the last launch recorded. A refresh
+// reads it before it lists the panes, and hands it to update.
+func (t *launchTracker) sequence() uint64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.seq
+}
+
+// take stops following a pane and returns its launch, nil when the pane was
+// not followed.
+func (t *launchTracker) take(paneID string) *launch {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	l := t.launches[paneID]
+	delete(t.launches, paneID)
 	return l
 }
 
-// restoreLaunch follows a pane again after takeLaunch.
-func (c *Core) restoreLaunch(paneID string, l *launch) {
+// restore follows a pane again after take.
+func (t *launchTracker) restore(paneID string, l *launch) {
 	if l == nil {
 		return
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.launches[paneID] = l
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.launches[paneID] = l
 }
 
-// updateLaunches settles the launches against a snapshot whose listing began
-// when launchSeq was seq: a launch whose pane is listed without being pending
-// hosts a registered session and is done, and one whose pane is gone has
-// failed. A launch recorded after the listing began may not be in it yet, and
-// waits for the next snapshot. Nothing is settled while the private server
-// fails without being gone. The caller holds c.mu.
-func (c *Core) updateLaunches(snap snapshot, seq uint64) {
+// update settles the launches against a snapshot whose listing began when the
+// sequence number was seq: a launch whose pane is listed without being
+// pending hosts a registered session and is done, and one whose pane is gone
+// has failed. A launch recorded after the listing began may not be in it yet,
+// and waits for the next snapshot. Nothing is settled while the private server
+// fails without being gone.
+func (t *launchTracker) update(snap snapshot, seq uint64) {
 	if !snap.privateOK && !snap.privateGone {
 		return
 	}
@@ -105,32 +129,34 @@ func (c *Core) updateLaunches(snap snapshot, seq uint64) {
 	for _, p := range snap.pending {
 		pending[p.ID] = true
 	}
-	for id, l := range c.launches {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for id, l := range t.launches {
 		switch {
 		case pending[id]:
 		case l.seq > seq:
 		case hasPane(snap.listedPrivate, id):
-			delete(c.launches, id)
+			delete(t.launches, id)
 		default:
-			c.failures = append(c.failures, StartFailure{Name: l.name, Cwd: l.cwd, Lines: l.lines})
-			delete(c.launches, id)
+			t.failures = append(t.failures, StartFailure{Name: l.name, Cwd: l.cwd, Lines: l.lines})
+			delete(t.launches, id)
 		}
 	}
 }
 
 // noteScreen keeps the last lines of a launched pane, to describe its end if
 // it fails.
-func (c *Core) noteScreen(paneID string, lines []string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	l, ok := c.launches[paneID]
+func (t *launchTracker) noteScreen(paneID string, lines []string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	l, ok := t.launches[paneID]
 	if !ok {
 		return
 	}
 	var kept []string
 	for i := len(lines) - 1; i >= 0 && len(kept) < failureLines; i-- {
-		if t := strings.TrimSpace(ansi.Strip(lines[i])); t != "" {
-			kept = append([]string{t}, kept...)
+		if text := strings.TrimSpace(ansi.Strip(lines[i])); text != "" {
+			kept = append([]string{text}, kept...)
 		}
 	}
 	if len(kept) > 0 {
@@ -138,12 +164,18 @@ func (c *Core) noteScreen(paneID string, lines []string) {
 	}
 }
 
+// takeFailures returns the failed starts found since the last call.
+func (t *launchTracker) takeFailures() []StartFailure {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := t.failures
+	t.failures = nil
+	return out
+}
+
 // StartFailures returns the failed starts found since the last call.
 func (c *Core) StartFailures() []StartFailure {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	out := c.failures
-	c.failures = nil
+	out := c.launches.takeFailures()
 	if out == nil {
 		out = []StartFailure{}
 	}
@@ -152,8 +184,8 @@ func (c *Core) StartFailures() []StartFailure {
 
 // isPending reports whether the pane of pid hosts no registered session yet.
 func (c *Core) isPending(pid int) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.snapMu.Lock()
+	defer c.snapMu.Unlock()
 	for _, p := range c.snap.pending {
 		if p.PID == pid {
 			return true

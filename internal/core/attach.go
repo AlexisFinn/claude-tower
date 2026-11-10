@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"claude-tower/internal/locate"
@@ -201,51 +202,115 @@ func planAttachments(snap snapshot, tried map[string]attachAttempt, now time.Tim
 // while being written does not remove an attach session still in use.
 const removeAfter = 2
 
-// syncAttachments starts and removes private attach sessions as
-// planAttachments decides, in the background so that Cards does not wait for
-// them. A session already being created or removed is skipped.
-func (c *Core) syncAttachments(snap snapshot) {
-	h := c.opts.Hosting
-	if h == nil || snap.private == "" || (!snap.privateOK && !snap.privateGone) {
-		return
+// attachTracker keeps what the application knows about the private attach
+// sessions: those being created or removed, the attempts made, and how long
+// attach sessions have been unneeded. It is safe for concurrent use; its lock
+// is independent of every other lock of Core.
+//
+// schedule registers each unit of work it returns on a wait group, and the
+// caller must end it with attachDone or removeDone once the work is over.
+type attachTracker struct {
+	mu        sync.Mutex
+	attaching map[string]bool          // background ids whose attach session is being created
+	tried     map[string]attachAttempt // attach attempts, per background id
+	unneeded  map[string]int           // consecutive snapshots an attach pane was unneeded, per pane ID
+	removing  map[string]bool          // attach panes being removed, per pane ID
+	closed    bool                     // no work is scheduled any more
+	work      sync.WaitGroup
+}
+
+func newAttachTracker() *attachTracker {
+	return &attachTracker{
+		attaching: map[string]bool{},
+		tried:     map[string]attachAttempt{},
+		unneeded:  map[string]int{},
+		removing:  map[string]bool{},
 	}
-	now := c.opts.Now()
-	c.mu.Lock()
-	work := planAttachments(snap, c.attachTried, now)
-	for _, id := range work.shown {
-		delete(c.attachTried, id)
+}
+
+// schedule returns what to start after a snapshot, as planAttachments decides:
+// the background sessions to attach to and the attach panes to remove. A
+// session already being created or removed is skipped. It returns nothing once
+// the tracker is closed.
+func (t *attachTracker) schedule(snap snapshot, now time.Time) (create []registry.Session, remove []tmux.Pane) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closed {
+		return nil, nil
+	}
+	plan := planAttachments(snap, t.tried, now)
+	for _, id := range plan.shown {
+		delete(t.tried, id)
 	}
 	live := map[string]bool{}
 	for _, id := range snap.background {
 		live[id] = true
 	}
-	for id := range c.attachTried {
+	for id := range t.tried {
 		if !live[id] {
-			delete(c.attachTried, id)
+			delete(t.tried, id)
 		}
 	}
-	var create []registry.Session
-	for _, s := range work.create {
+	for _, s := range plan.create {
 		id := snap.background[s.PID]
-		if c.attaching[id] {
+		if t.attaching[id] {
 			continue
 		}
-		c.attaching[id] = true
-		a := c.attachTried[id]
-		c.attachTried[id] = attachAttempt{at: now, count: a.count + 1}
+		t.attaching[id] = true
+		a := t.tried[id]
+		t.tried[id] = attachAttempt{at: now, count: a.count + 1}
 		create = append(create, s)
 	}
 	unneeded := map[string]int{}
-	var remove []tmux.Pane
-	for _, p := range work.remove {
-		unneeded[p.ID] = c.unneeded[p.ID] + 1
-		if unneeded[p.ID] >= removeAfter && !c.removing[p.ID] {
-			c.removing[p.ID] = true
+	for _, p := range plan.remove {
+		unneeded[p.ID] = t.unneeded[p.ID] + 1
+		if unneeded[p.ID] >= removeAfter && !t.removing[p.ID] {
+			t.removing[p.ID] = true
 			remove = append(remove, p)
 		}
 	}
-	c.unneeded = unneeded
-	c.mu.Unlock()
+	t.unneeded = unneeded
+	t.work.Add(len(create) + len(remove))
+	return create, remove
+}
+
+// attachDone ends the creation of the attach session of background id.
+func (t *attachTracker) attachDone(id string) {
+	t.mu.Lock()
+	delete(t.attaching, id)
+	t.mu.Unlock()
+	t.work.Done()
+}
+
+// removeDone ends the removal of the attach pane paneID.
+func (t *attachTracker) removeDone(paneID string) {
+	t.mu.Lock()
+	delete(t.removing, paneID)
+	t.mu.Unlock()
+	t.work.Done()
+}
+
+// close stops scheduling work.
+func (t *attachTracker) close() {
+	t.mu.Lock()
+	t.closed = true
+	t.mu.Unlock()
+}
+
+// wait blocks until the work scheduled so far is over.
+func (t *attachTracker) wait() {
+	t.work.Wait()
+}
+
+// syncAttachments starts and removes private attach sessions as
+// planAttachments decides, in the background so that Cards does not wait for
+// them.
+func (c *Core) syncAttachments(snap snapshot) {
+	h := c.opts.Hosting
+	if h == nil || snap.private == "" || (!snap.privateOK && !snap.privateGone) {
+		return
+	}
+	create, remove := c.attachments.schedule(snap, c.opts.Now())
 	for _, s := range create {
 		go c.attach(s, snap.background[s.PID])
 	}
@@ -256,26 +321,23 @@ func (c *Core) syncAttachments(snap snapshot) {
 
 // removeAttach destroys the attach session of p.
 func (c *Core) removeAttach(p tmux.Pane) {
-	defer func() {
-		c.mu.Lock()
-		delete(c.removing, p.ID)
-		c.mu.Unlock()
-	}()
-	ctx, cancel := context.WithTimeout(context.Background(), attachTimeout)
+	defer c.attachments.removeDone(p.ID)
+	ctx, cancel := context.WithTimeout(c.bgCtx, attachTimeout)
 	defer cancel()
 	p.Server.KillSession(ctx, p.SessionID)
 }
 
 // attach creates the attach session of the background session s.
 func (c *Core) attach(s registry.Session, id string) {
-	defer func() {
-		c.mu.Lock()
-		delete(c.attaching, id)
-		c.mu.Unlock()
-	}()
-	ctx, cancel := context.WithTimeout(context.Background(), attachTimeout)
+	defer c.attachments.attachDone(id)
+	ctx, cancel := context.WithTimeout(c.bgCtx, attachTimeout)
 	defer cancel()
 	h := c.opts.Hosting
 	// A failure leaves the card without a screen until the next attempt.
 	h.NewAttachSession(ctx, s.Cwd, id, h.NewSessionEnv(ctx))
+}
+
+// wait blocks until the attach and removal goroutines started so far are over.
+func (c *Core) wait() {
+	c.attachments.wait()
 }

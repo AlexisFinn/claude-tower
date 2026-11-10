@@ -317,6 +317,12 @@ func (h *Hosting) ResolveClaudeConfigDir(ctx context.Context) {
 	}
 }
 
+// ClaudeDir returns the Claude Code configuration directory read by the
+// application, ClaudeConfigDir.
+func (h *Hosting) ClaudeDir() string {
+	return h.ClaudeConfigDir
+}
+
 // NewSessionEnv returns the environment of a session started by the
 // application: AppEnv with a UTF-8 locale and without the terminal variables
 // of the caller. CLAUDE_CONFIG_DIR is SessionConfigDir, or absent when that is
