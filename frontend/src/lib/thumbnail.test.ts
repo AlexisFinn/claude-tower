@@ -4,6 +4,7 @@ import { bodyGeometry, type BodyGeometry } from './bodySize'
 import { screenSequence } from './screenSequence'
 import { createThumbnail } from './thumbnail'
 import { DEFAULT_BG } from './termPalette'
+import type { ThumbnailStyle } from './thumbnailStyle'
 
 interface Call {
   name: string
@@ -65,9 +66,11 @@ function show(lines: string[], rows: number): Promise<void> {
   return new Promise((resolve) => term.write(screenSequence(lines, rows), resolve))
 }
 
-function draw(thumbnail: ReturnType<typeof createThumbnail>, g: BodyGeometry, dpr = 1): void {
+const plain: ThumbnailStyle = { heavy: false, direct: false }
+
+function draw(thumbnail: ReturnType<typeof createThumbnail>, g: BodyGeometry, dpr = 1, style = plain): void {
   calls.length = 0
-  thumbnail.draw(term.buffer.active, g, dpr)
+  thumbnail.draw(term.buffer.active, g, dpr, style)
 }
 
 function paintedRows(): number[] {
@@ -162,5 +165,27 @@ describe('createThumbnail', () => {
     draw(thumbnail, geometry(3))
     expect(canvas.height).toBeLessThan(height)
     expect(paintedRows()).toHaveLength(3)
+  })
+
+  it('outlines the glyphs and repaints everything when the style becomes heavy', async () => {
+    await show(lines, 5)
+    const thumbnail = createThumbnail(canvas as unknown as HTMLCanvasElement)
+    const g = geometry()
+    draw(thumbnail, g)
+    expect(calls.some((c) => c.name === 'strokeText')).toBe(false)
+    draw(thumbnail, g, 1, { heavy: true, direct: false })
+    expect(paintedRows()).toHaveLength(5)
+    expect(calls.some((c) => c.name === 'strokeText')).toBe(true)
+  })
+
+  it('draws at the display resolution when the style is direct', async () => {
+    await show(lines, 5)
+    const thumbnail = createThumbnail(canvas as unknown as HTMLCanvasElement)
+    const g = geometry()
+    draw(thumbnail, g)
+    const oversampled = canvas.width
+    draw(thumbnail, g, 1, { heavy: false, direct: true })
+    expect(canvas.width).toBe(Math.round(oversampled / 2))
+    expect(paintedRows()).toHaveLength(5)
   })
 })
