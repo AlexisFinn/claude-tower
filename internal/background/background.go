@@ -97,7 +97,7 @@ type Tracker struct {
 	agents  map[string]time.Time
 	shells  map[string]time.Time
 	ended   map[string]struct{}
-	endedQ  []string // ring of the ended ids, in order of arrival once full
+	endedQ  []string // ring of the ended ids
 	endedAt int      // index of the oldest id of endedQ once it is full
 }
 

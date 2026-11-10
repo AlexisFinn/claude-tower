@@ -90,13 +90,13 @@ func TestReadProcSkipsEntriesWithoutFile(t *testing.T) {
 	}
 }
 
-func TestReadProcMissingDirFails(t *testing.T) {
+func TestReadProcMissingDirIsEmpty(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "absent")
-	if _, err := readProc(missing); err == nil {
-		t.Error("missing directory ignored by readProc")
+	if tree, err := readProc(missing); err != nil || len(tree) != 0 {
+		t.Errorf("readProc: %v, %v", tree, err)
 	}
-	if _, err := readProcAttachments(missing); err == nil {
-		t.Error("missing directory ignored by readProcAttachments")
+	if att, err := readProcAttachments(missing); err != nil || len(att) != 0 {
+		t.Errorf("readProcAttachments: %v, %v", att, err)
 	}
 }
 

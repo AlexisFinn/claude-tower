@@ -34,7 +34,7 @@ func readAttachments(ctx context.Context, run tmux.Runner, goos, procDir string)
 
 func readProcAttachments(dir string) (Attachments, error) {
 	out := Attachments{}
-	err := forEachProc(dir, "cmdline", func(pid int, data []byte) {
+	forEachProc(dir, "cmdline", func(pid int, data []byte) {
 		if !bytes.Contains(data, []byte("attach")) {
 			return
 		}
@@ -42,9 +42,6 @@ func readProcAttachments(dir string) (Attachments, error) {
 			out[pid] = id
 		}
 	})
-	if err != nil {
-		return nil, err
-	}
 	return out, nil
 }
 

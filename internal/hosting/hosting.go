@@ -51,6 +51,7 @@ type Hosting struct {
 	loginErr      error      // last failure of the login shell
 	loginFailedAt time.Time  // when loginErr happened
 	loginCall     *loginCall // the login shell run in progress, if any
+	reloadDue     bool       // tmux.conf changed and the running server has not read it yet
 }
 
 // NewSystem returns a Hosting wired to the real system, with environ as the

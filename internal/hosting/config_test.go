@@ -130,6 +130,36 @@ func TestEnsureConfigChangedReloadsOnlyAfterAChange(t *testing.T) {
 	}
 }
 
+func TestEnsureConfigChangedRetriesAFailedReload(t *testing.T) {
+	rec := &recorder{}
+	h := newHosting(t, rec)
+	path := filepath.Join(h.ConfigDir, "tmux.conf")
+	want := [][]string{{"list-sessions"}, {"source-file", path}}
+	rec.reply = func(name string, args []string) ([]byte, error) {
+		if len(args) > 2 && args[2] == "source-file" {
+			return nil, errors.New("server busy")
+		}
+		return nil, nil
+	}
+	if err := h.ensureConfigChanged(context.Background()); err == nil {
+		t.Fatal("source-file failure ignored")
+	}
+	rec.calls, rec.reply = nil, nil
+	if err := h.ensureConfigChanged(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := rec.tmuxCommands(); !reflect.DeepEqual(got, want) {
+		t.Errorf("reload after a failure: got %v want %v", got, want)
+	}
+	rec.calls = nil
+	if err := h.ensureConfigChanged(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := rec.tmuxCommands(); len(got) != 0 {
+		t.Errorf("reloaded again after a success: %v", got)
+	}
+}
+
 func TestEnsureConfigKeepsUnchangedFile(t *testing.T) {
 	h := newHosting(t, &recorder{})
 	if err := h.EnsureConfig(context.Background()); err != nil {

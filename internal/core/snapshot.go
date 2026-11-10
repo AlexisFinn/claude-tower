@@ -119,10 +119,9 @@ func (c *Core) refresh(ctx context.Context) (snapshot, error) {
 	return snap, nil
 }
 
-// readServers queries every server in parallel, and the panes and the clients
-// of one server in parallel too. A server that fails, such as an orphaned
-// socket, is reported as not ok; its panes error takes precedence over its
-// clients error.
+// readServers queries every server in parallel. A server that fails, such as
+// an orphaned socket, is reported as not ok; its clients are read only once
+// its panes are, so that a dead socket costs one tmux process per cycle.
 func (c *Core) readServers(ctx context.Context, servers []tmux.Server) []serverState {
 	states := make([]serverState, len(servers))
 	var wg sync.WaitGroup
@@ -130,18 +129,12 @@ func (c *Core) readServers(ctx context.Context, servers []tmux.Server) []serverS
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			var clients []tmux.Client
-			var clientsErr error
-			done := make(chan struct{})
-			go func() {
-				defer close(done)
-				clients, clientsErr = srv.Clients(ctx)
-			}()
 			panes, err := srv.Panes(ctx)
-			<-done
-			if err == nil {
-				err = clientsErr
+			if err != nil {
+				states[i] = serverState{socket: srv.Socket, err: err}
+				return
 			}
+			clients, err := srv.Clients(ctx)
 			if err != nil {
 				states[i] = serverState{socket: srv.Socket, err: err}
 				return

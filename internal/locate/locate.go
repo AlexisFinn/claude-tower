@@ -40,25 +40,21 @@ func readTree(ctx context.Context, run tmux.Runner, goos, procDir string) (Tree,
 
 func readProc(dir string) (Tree, error) {
 	tree := Tree{}
-	err := forEachProc(dir, "stat", func(pid int, data []byte) {
+	forEachProc(dir, "stat", func(pid int, data []byte) {
 		if ppid, err := parsePPID(string(data)); err == nil {
 			tree[pid] = ppid
 		}
 	})
-	if err != nil {
-		return nil, err
-	}
 	return tree, nil
 }
 
 // forEachProc calls fn with the PID and the content of the file named file
 // of each process listed in the proc directory dir. A process whose file
 // cannot be read, such as one that just exited, is skipped.
-func forEachProc(dir, file string, fn func(pid int, data []byte)) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return err
-	}
+func forEachProc(dir, file string, fn func(pid int, data []byte)) {
+	// An unreadable dir yields the entries read so far, possibly none, like a
+	// glob that matches nothing.
+	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
 		pid, err := strconv.Atoi(e.Name())
 		if err != nil {
@@ -70,7 +66,6 @@ func forEachProc(dir, file string, fn func(pid int, data []byte)) error {
 		}
 		fn(pid, data)
 	}
-	return nil
 }
 
 // parsePPID extracts the ppid, the field after the state, from a stat line

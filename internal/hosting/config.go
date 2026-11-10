@@ -92,7 +92,7 @@ func (h *Hosting) EnsureConfig(ctx context.Context) error {
 }
 
 // ensureConfigChanged is EnsureConfig except that a running private server
-// reads the file only when its content changed.
+// reads the file only when its content changed or a previous reload failed.
 func (h *Hosting) ensureConfigChanged(ctx context.Context) error {
 	return h.syncConfig(ctx, false)
 }
@@ -102,20 +102,33 @@ func (h *Hosting) syncConfig(ctx context.Context, reloadUnchanged bool) error {
 	if err != nil {
 		return err
 	}
-	if !changed && !reloadUnchanged {
+	h.mu.Lock()
+	due := changed || reloadUnchanged || h.reloadDue
+	h.reloadDue = h.reloadDue || changed
+	h.mu.Unlock()
+	if !due {
 		return nil
 	}
 	srv, err := h.server()
 	if err != nil {
 		return err
 	}
+	// A server that is not running reads the file when it starts.
 	if _, err := srv.Exec(ctx, nil, "list-sessions"); err != nil {
+		h.setReloadDue(false)
 		return nil
 	}
 	if _, err := srv.Exec(ctx, nil, "source-file", path); err != nil {
 		return fmt.Errorf("source-file : %w", err)
 	}
+	h.setReloadDue(false)
 	return nil
+}
+
+func (h *Hosting) setReloadDue(due bool) {
+	h.mu.Lock()
+	h.reloadDue = due
+	h.mu.Unlock()
 }
 
 // writeTmuxConf returns the path of tmux.conf, written if it differs from the
