@@ -155,9 +155,6 @@ func (c *Core) Fit(ctx context.Context, pid, cols, rows int) (bool, error) {
 	if strings.HasPrefix(pane.SessionName, tmux.AttachPrefix) {
 		return false, errors.New("une session d'arrière-plan garde sa taille")
 	}
-	if pane.Width == cols && pane.Height == rows {
-		return true, nil
-	}
 	// A view session shows the pane in fullscreen, or is about to: its client
 	// is not among Clients, which leaves view sessions out.
 	views, err := pane.Server.ViewSessionsOf(ctx, pane)

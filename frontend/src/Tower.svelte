@@ -94,10 +94,12 @@
   async function fit(card: core.Card, screen: core.Screen): Promise<void> {
     const size = fits.get(card.PID)
     if (!size || !fitRequests.shouldAsk(card.PID, size, { cols: screen.Width, rows: screen.Height }, card.Attached)) return
+    const ticket = fitRequests.ticket(card.PID)
     try {
-      fitRequests.record(card.PID, size, (await FitSession(card.PID, size.cols, size.rows)) ? 'applied' : 'kept')
+      const applied = await FitSession(card.PID, size.cols, size.rows)
+      fitRequests.record(card.PID, size, applied ? 'applied' : 'kept', ticket)
     } catch {
-      fitRequests.record(card.PID, size, 'failed')
+      fitRequests.record(card.PID, size, 'failed', ticket)
     }
   }
 

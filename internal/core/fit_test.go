@@ -67,16 +67,6 @@ func TestFitKeepsTheSizeOfAnAttachedClient(t *testing.T) {
 	}
 }
 
-func TestFitSkipsAWindowAlreadyAtThatSize(t *testing.T) {
-	e, c := fitEnv(t)
-	if ok, err := c.Fit(context.Background(), 200, 80, 24); err != nil || !ok {
-		t.Fatalf("ok=%v err=%v", ok, err)
-	}
-	if got := resizeCalls(e, e.privSock); got != nil {
-		t.Errorf("resize of a window at the right size: %v", got)
-	}
-}
-
 func TestFitRefusesUnusableSizes(t *testing.T) {
 	e, c := fitEnv(t)
 	for _, size := range [][2]int{{59, 40}, {120, 11}, {1001, 40}, {120, 1001}} {
