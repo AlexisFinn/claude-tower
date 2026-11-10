@@ -18,6 +18,7 @@ test:
 	$(GO_ENV) go test ./internal/...
 ifeq ($(shell uname),Linux)
 	$(GO_ENV) go vet -tags webkit2_41 .
+	$(GO_ENV) go test -tags webkit2_41 .
 endif
 	cd frontend && npx vitest run && npm run check
 

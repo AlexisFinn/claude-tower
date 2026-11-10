@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { Cards, FitSession, Focus, GuardQuit, Kill, NewSession, Quit, Screen, StartFailures } from '../wailsjs/go/app/App'
+  import { Cards, FitSession, Focus, AckQuit, GuardQuit, Kill, NewSession, Quit, Screen, StartFailures } from '../wailsjs/go/app/App'
   import type { core } from '../wailsjs/go/models'
   import AppBar from './AppBar.svelte'
   import Card from './Card.svelte'
@@ -26,6 +26,7 @@
   import { summarizeStates } from './lib/summary'
   import { EventsOn } from '../wailsjs/runtime/runtime'
   import { createFitRequests } from './lib/fitRequests'
+  import { isQuitShortcut } from './lib/quitShortcut'
   import { createToasts, type Toast, type ToastKind } from './lib/toasts'
   import { createTypingPause } from './lib/typingPause'
 
@@ -186,10 +187,14 @@
       if (!document.hidden) refresher.kick()
     }
     document.addEventListener('visibilitychange', onVisibility)
-    // Closing the window asks here first, now that a confirmation can show.
-    const stopQuitRequests = EventsOn('quit-requested', askQuit)
-    void GuardQuit()
+    // Closing the window asks here first while this view can show the confirmation.
+    const stopQuitRequests = EventsOn('quit-requested', onQuitRequested)
+    const unguard = (): void => void GuardQuit(false)
+    window.addEventListener('beforeunload', unguard)
+    void GuardQuit(true)
     return () => {
+      unguard()
+      window.removeEventListener('beforeunload', unguard)
       stopQuitRequests()
       refresher.stop()
       typing.dispose()
@@ -248,6 +253,15 @@
 
   function askQuit(): void {
     confirmQuit = true
+  }
+
+  /** Answers a close request of the window: the confirmation shows above everything else. */
+  function onQuitRequested(): void {
+    void AckQuit()
+    closeFullscreen()
+    helpOpen = false
+    newSessionOpen = false
+    askQuit()
   }
 
   async function quitConfirmed(): Promise<void> {
@@ -335,8 +349,8 @@
   }
 
   function onKeydown(e: KeyboardEvent): void {
-    // In fullscreen, Ctrl+Q belongs to the session.
-    if (fullscreen === null && e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === 'q') {
+    const dialogOpen = confirmQuit || confirmKill !== null || newSessionOpen || helpOpen
+    if (isQuitShortcut(e, fullscreen !== null || dialogOpen)) {
       e.preventDefault()
       askQuit()
       return
@@ -444,8 +458,8 @@
         retrouves en la relançant.
       </p>
       <div class="actions">
-        <button class="btn" data-autofocus title="Échap" onclick={() => (confirmQuit = false)}>Annuler</button>
-        <button class="btn btn-primary" title="Entrée" onclick={() => void quitConfirmed()}>Quitter</button>
+        <button class="btn" title="Échap" onclick={() => (confirmQuit = false)}>Annuler</button>
+        <button class="btn btn-primary" data-autofocus title="Entrée" onclick={() => void quitConfirmed()}>Quitter</button>
       </div>
     </Dialog>
   {:else if confirmKill !== null}

@@ -44,15 +44,30 @@ func main() {
 type window struct {
 	ctx   context.Context
 	ready chan struct{}
-	// guarded is set once the frontend confirms the closing of the window, and
-	// quitting once the user confirmed it.
+	// guarded is set while the frontend confirms the closing of the window,
+	// and quitting once the user confirmed it.
 	guarded, quitting atomic.Bool
+	// requests counts the close requests sent to the frontend, and acked the
+	// last one it answered.
+	requests, acked atomic.Uint64
+	ackWait         time.Duration
+	emit            func(ctx context.Context, name string)
+	quit            func(ctx context.Context)
 }
 
 const windowWait = 30 * time.Second
 
+// closeAckWait is how long a close request waits for the frontend to show
+// its confirmation before the window closes anyway.
+const closeAckWait = 2 * time.Second
+
 func newWindow() *window {
-	return &window{ready: make(chan struct{})}
+	return &window{
+		ready:   make(chan struct{}),
+		ackWait: closeAckWait,
+		emit:    func(ctx context.Context, name string) { runtime.EventsEmit(ctx, name) },
+		quit:    runtime.Quit,
+	}
 }
 
 func (w *window) setContext(ctx context.Context) {
@@ -93,22 +108,32 @@ func (w *window) ChooseFiles() ([]string, error) {
 	return runtime.OpenMultipleFilesDialog(ctx, runtime.OpenDialogOptions{Title: "Fichiers à joindre"})
 }
 
-func (w *window) GuardQuit() { w.guarded.Store(true) }
+func (w *window) GuardQuit(on bool) { w.guarded.Store(on) }
+
+func (w *window) AckQuit() { w.acked.Store(w.requests.Load()) }
 
 func (w *window) Quit() {
 	w.quitting.Store(true)
 	if ctx, err := w.context(); err == nil {
-		runtime.Quit(ctx)
+		w.quit(ctx)
 	}
 }
 
 // beforeClose keeps the window open and asks the frontend for a confirmation,
-// unless the frontend cannot show one or the user already confirmed.
+// unless the frontend cannot show one or the user already confirmed. A
+// frontend that does not answer within ackWait, because it reloads or broke,
+// lets the window close.
 func (w *window) beforeClose(ctx context.Context) bool {
 	if w.quitting.Load() || !w.guarded.Load() {
 		return false
 	}
-	runtime.EventsEmit(ctx, "quit-requested")
+	n := w.requests.Add(1)
+	w.emit(ctx, "quit-requested")
+	time.AfterFunc(w.ackWait, func() {
+		if w.acked.Load() < n {
+			w.Quit()
+		}
+	})
 	return true
 }
 

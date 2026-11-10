@@ -42,8 +42,10 @@ type Dialogs interface {
 	// is cancelled.
 	ChooseFiles() ([]string, error)
 	// GuardQuit makes closing the window ask the frontend for a confirmation
-	// instead, once the frontend shows it.
-	GuardQuit()
+	// instead, while on is true.
+	GuardQuit(on bool)
+	// AckQuit tells that the frontend shows the confirmation it was asked for.
+	AckQuit()
 	// Quit closes the application without asking again.
 	Quit()
 }
@@ -291,10 +293,16 @@ func (a *App) NewSession(name string) error {
 	return e.NewSession(ctx, dir, name)
 }
 
-// GuardQuit tells that the frontend confirms the closing of the window: from
-// then on, closing it emits "quit-requested" instead.
-func (a *App) GuardQuit() {
-	a.dialogs.GuardQuit()
+// GuardQuit tells whether the frontend confirms the closing of the window:
+// while it does, closing it emits "quit-requested" instead, which the
+// frontend answers with AckQuit.
+func (a *App) GuardQuit(on bool) {
+	a.dialogs.GuardQuit(on)
+}
+
+// AckQuit tells that the frontend shows the confirmation of a close request.
+func (a *App) AckQuit() {
+	a.dialogs.AckQuit()
 }
 
 // Quit closes the application after the user confirmed it. The sessions of

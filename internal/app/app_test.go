@@ -46,7 +46,8 @@ type fakeDialogs struct {
 
 func (d fakeDialogs) ChooseDirectory() (string, error) { return d.dir, d.err }
 func (d fakeDialogs) ChooseFiles() ([]string, error)   { return d.files, d.err }
-func (d fakeDialogs) GuardQuit()                       {}
+func (d fakeDialogs) GuardQuit(bool)                   {}
+func (d fakeDialogs) AckQuit()                         {}
 func (d fakeDialogs) Quit()                            {}
 
 type noEmit struct{}
