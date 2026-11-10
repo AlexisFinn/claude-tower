@@ -24,8 +24,12 @@ type Tree map[int]int
 // ReadTree reads the process tree once. Linux reads /proc; other systems run
 // ps through run.
 func ReadTree(ctx context.Context, run tmux.Runner) (Tree, error) {
-	if runtime.GOOS == "linux" {
-		return readProc("/proc")
+	return readTree(ctx, run, runtime.GOOS, "/proc")
+}
+
+func readTree(ctx context.Context, run tmux.Runner, goos, procDir string) (Tree, error) {
+	if goos == "linux" {
+		return readProc(procDir)
 	}
 	out, err := run(ctx, nil, "ps", "-A", "-o", "pid=,ppid=")
 	if err != nil {

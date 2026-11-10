@@ -1,5 +1,5 @@
-// Package view holds the formatting shared by the status bar, the list output
-// and the terminal interface: icons, labels, durations, names and ordering.
+// Package view holds the formatting shared by the status bar and the list
+// output: icons, labels, durations, names and ordering.
 package view
 
 import (
@@ -142,9 +142,9 @@ func ShortPath(cwd, home string) string {
 	return cwd
 }
 
-// SortByName returns a copy ordered by display name (case-insensitive), then
+// sortByName returns a copy ordered by display name (case-insensitive), then
 // start time, then PID. It is stable from one refresh to the next.
-func SortByName(ss []registry.Session) []registry.Session {
+func sortByName(ss []registry.Session) []registry.Session {
 	out := append([]registry.Session(nil), ss...)
 	sort.SliceStable(out, func(i, j int) bool { return lessByName(out[i], out[j]) })
 	return out

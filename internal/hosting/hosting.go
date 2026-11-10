@@ -26,20 +26,23 @@ const (
 
 // Hosting holds everything the private server needs from the system. Every
 // field can be replaced, so that tests never touch the real directories,
-// shell or environment. A Hosting must not be copied once used.
+// shell or environment. SocketDir and ConfigDir are required, and so is Self
+// to start sessions; NewSystem fills them in. A Hosting must not be copied
+// once used.
 type Hosting struct {
-	SocketDir        string                                      // directory of the private socket; default: PrivateSocketDir
-	ConfigDir        string                                      // directory of config.json and tmux.conf; default: DefaultConfigDir
-	Self             string                                      // path of the claude-tower binary run by exec-env
-	Tmux             tmux.Runner                                 // runs tmux and infocmp; default: tmux.DefaultRunner
-	Bin              string                                      // tmux binary; default: "tmux"
-	Env              []string                                    // environment of the calling process
-	ClaudeConfigDir  string                                      // Claude Code configuration directory read by the application
-	SessionConfigDir string                                      // CLAUDE_CONFIG_DIR given to new sessions; empty keeps Claude Code's default
-	Shell            string                                      // login shell; default: $SHELL from Env, then /bin/sh
-	ShellRun         tmux.Runner                                 // runs the login shell; default: a runner limited to 10 seconds
-	Exec             func(path string, argv, env []string) error // replaces the process; default: syscall.Exec
-	Cwd              func() (string, error)                      // default: os.Getwd
+	SocketDir         string                                      // directory of the private socket
+	ConfigDir         string                                      // directory of config.json and tmux.conf
+	Self              string                                      // path of the claude-tower binary run by exec-env
+	Tmux              tmux.Runner                                 // runs tmux and infocmp; default: tmux.DefaultRunner
+	Bin               string                                      // tmux binary; default: "tmux"
+	Env               []string                                    // environment of the calling process
+	ClaudeConfigDir   string                                      // Claude Code configuration directory read by the application
+	SessionConfigDir  string                                      // CLAUDE_CONFIG_DIR given to new sessions; empty keeps Claude Code's default
+	Shell             string                                      // login shell; default: $SHELL from Env, then /bin/sh
+	ShellRun          tmux.Runner                                 // runs the login shell; default: a runner limited to 10 seconds
+	Exec              func(path string, argv, env []string) error // replaces the process; default: syscall.Exec
+	Cwd               func() (string, error)                      // default: os.Getwd
+	StartupCheckDelay time.Duration                               // how long a new session must stay alive to count as started; zero does not wait
 
 	mu        sync.Mutex
 	loginEnv  []string
@@ -59,11 +62,12 @@ func NewSystem(environ []string) (*Hosting, error) {
 	self, _ := os.Executable()
 	bin, _ := tmux.FindBinary(exec.LookPath)
 	h := &Hosting{
-		SocketDir: PrivateSocketDir(runtime.GOOS, home, func(k string) string { return envValue(environ, k) }),
-		ConfigDir: DefaultConfigDir(runtime.GOOS, home),
-		Self:      self,
-		Bin:       bin,
-		Env:       environ,
+		SocketDir:         privateSocketDir(runtime.GOOS, home, func(k string) string { return envValue(environ, k) }),
+		ConfigDir:         defaultConfigDir(runtime.GOOS, home),
+		Self:              self,
+		Bin:               bin,
+		Env:               environ,
+		StartupCheckDelay: time.Second,
 	}
 	h.SessionConfigDir = envValue(environ, "CLAUDE_CONFIG_DIR")
 	if cfg, err := h.LoadConfig(); h.SessionConfigDir == "" && err == nil {
@@ -78,9 +82,9 @@ func NewSystem(environ []string) (*Hosting, error) {
 	return h, nil
 }
 
-// PrivateSocketDir returns the default directory of the private socket for
+// privateSocketDir returns the default directory of the private socket for
 // the given system.
-func PrivateSocketDir(goos, home string, getenv func(string) string) string {
+func privateSocketDir(goos, home string, getenv func(string) string) string {
 	if goos == "darwin" {
 		return filepath.Join(home, "Library", "Application Support", appDirName)
 	}
@@ -90,60 +94,32 @@ func PrivateSocketDir(goos, home string, getenv func(string) string) string {
 	return filepath.Join(home, ".local", "state", appDirName)
 }
 
-// DefaultConfigDir returns the directory of config.json and tmux.conf for the
+// defaultConfigDir returns the directory of config.json and tmux.conf for the
 // given system.
-func DefaultConfigDir(goos, home string) string {
+func defaultConfigDir(goos, home string) string {
 	if goos == "darwin" {
 		return filepath.Join(home, "Library", "Application Support", appDirName)
 	}
 	return filepath.Join(home, ".config", appDirName)
 }
 
-// PrivateSocket returns the socket of the private server at its default
-// location, creating and checking its directory.
-func PrivateSocket() (string, error) {
-	dir, err := defaultSocketDir()
-	if err != nil {
-		return "", err
-	}
-	return socketIn(dir)
-}
-
-func defaultSocketDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return PrivateSocketDir(runtime.GOOS, home, os.Getenv), nil
-}
-
 // PrivateSocket returns the socket of the private server, creating and
 // checking its directory.
 func (h *Hosting) PrivateSocket() (string, error) {
-	if h.SocketDir == "" {
-		return PrivateSocket()
-	}
 	return socketIn(h.SocketDir)
 }
 
 // PrivateSocketPath returns the socket of the private server without creating
 // its directory. An existing directory is checked like PrivateSocket does.
 func (h *Hosting) PrivateSocketPath() (string, error) {
-	dir := h.SocketDir
-	if dir == "" {
-		var err error
-		if dir, err = defaultSocketDir(); err != nil {
-			return "", err
-		}
-	}
-	info, err := os.Lstat(dir)
+	info, err := os.Lstat(h.SocketDir)
 	if err == nil {
-		err = checkSocketDir(dir, info, os.Getuid())
+		err = checkSocketDir(h.SocketDir, info, os.Getuid())
 	}
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return "", err
 	}
-	return filepath.Join(dir, socketName), nil
+	return filepath.Join(h.SocketDir, socketName), nil
 }
 
 func socketIn(dir string) (string, error) {
@@ -212,17 +188,6 @@ func (h *Hosting) shell() string {
 		return s
 	}
 	return "/bin/sh"
-}
-
-func (h *Hosting) configDir() (string, error) {
-	if h.ConfigDir != "" {
-		return h.ConfigDir, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return DefaultConfigDir(runtime.GOOS, home), nil
 }
 
 func (h *Hosting) execFn() func(string, []string, []string) error {

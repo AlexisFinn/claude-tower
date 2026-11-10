@@ -19,8 +19,8 @@ import (
 	"time"
 )
 
-// DefaultTimeout bounds every command run by DefaultRunner.
-const DefaultTimeout = 2 * time.Second
+// defaultTimeout bounds every command run by DefaultRunner.
+const defaultTimeout = 2 * time.Second
 
 // Runner runs an external command and returns its standard output. The error
 // of a failed command includes its standard error.
@@ -57,7 +57,7 @@ func ExecRunner(timeout time.Duration) Runner {
 }
 
 // DefaultRunner is the Runner used when a Server has none.
-var DefaultRunner = ExecRunner(DefaultTimeout)
+var DefaultRunner = ExecRunner(defaultTimeout)
 
 // Server is one tmux server, identified by its socket. Every command uses -S.
 type Server struct {

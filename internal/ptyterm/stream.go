@@ -95,6 +95,9 @@ func (s *stream) flush() bool {
 // run flushes on every signal, at most once per flushInterval, until the exit
 // event is sent or stop is closed.
 func (s *stream) run(stop <-chan struct{}) {
+	timer := time.NewTimer(flushInterval)
+	timer.Stop()
+	defer timer.Stop()
 	for {
 		select {
 		case <-s.wake:
@@ -104,8 +107,9 @@ func (s *stream) run(stop <-chan struct{}) {
 		if s.flush() {
 			return
 		}
+		timer.Reset(flushInterval)
 		select {
-		case <-time.After(flushInterval):
+		case <-timer.C:
 		case <-stop:
 			return
 		}

@@ -71,6 +71,10 @@ type App struct {
 	dialogs Dialogs
 	environ []string
 
+	// newHosting and newCore build what start wires together.
+	newHosting func(environ []string) (*hosting.Hosting, error)
+	newCore    func(h *hosting.Hosting) (Engine, error)
+
 	// started is closed when Startup ends; engine, terms, startErr and
 	// startWarn are written before that and only read after it.
 	started   chan struct{}
@@ -88,7 +92,17 @@ type App struct {
 func New(emit Emitter, dialogs Dialogs, environ []string) *App {
 	a := &App{emit: emit, dialogs: dialogs, environ: environ, started: make(chan struct{}), startWait: startWait}
 	a.boot = (*App).start
+	a.newHosting = hosting.NewSystem
+	a.newCore = newCore
 	return a
+}
+
+func newCore(h *hosting.Hosting) (Engine, error) {
+	c, err := core.New(core.Options{Hosting: h, Titles: titles.New(titles.Options{Claude: h.ClaudePath, Env: h.NewSessionEnv})})
+	if err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 // Startup builds the engine, writes the configuration of the private tmux
@@ -103,7 +117,7 @@ func Startup(a *App) {
 }
 
 func (a *App) start() {
-	h, err := hosting.NewSystem(a.environ)
+	h, err := a.newHosting(a.environ)
 	if err != nil {
 		a.startErr = err
 		return
@@ -113,7 +127,7 @@ func (a *App) start() {
 	rctx, rcancel := context.WithTimeout(ctx, resolveTimeout)
 	h.ResolveClaudeConfigDir(rctx)
 	rcancel()
-	c, err := core.New(core.Options{Hosting: h, Titles: titles.New(titles.Options{Claude: h.ClaudePath, Env: h.NewSessionEnv})})
+	c, err := a.newCore(h)
 	if err != nil {
 		a.startErr = err
 		return

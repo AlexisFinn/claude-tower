@@ -21,10 +21,10 @@ var (
 	bufferSeq atomic.Uint64
 )
 
-// Sanitize makes text safe to paste: CRLF and lone CR become LF, then every
+// sanitize makes text safe to paste: CRLF and lone CR become LF, then every
 // control character (C0, DEL and C1, ESC included) is dropped except LF and
 // TAB. The result does not depend on how a given tmux version filters pastes.
-func Sanitize(text string) string {
+func sanitize(text string) string {
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	text = strings.ReplaceAll(text, "\r", "\n")
 	return strings.Map(func(r rune) rune {
@@ -40,7 +40,7 @@ func Sanitize(text string) string {
 // limited in size nor visible in a process list. Two pastes into the same
 // pane never interleave.
 func (s Server) Paste(ctx context.Context, pane, text string) error {
-	text = Sanitize(text)
+	text = sanitize(text)
 	if strings.TrimSpace(text) == "" {
 		return errors.New("texte vide après filtrage des caractères de contrôle")
 	}

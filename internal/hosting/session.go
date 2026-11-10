@@ -16,10 +16,6 @@ import (
 
 const maxNameAttempts = 50
 
-// startupCheckDelay is how long a new session must stay alive to count as
-// started.
-var startupCheckDelay = time.Second
-
 var commandNameRe = regexp.MustCompile(`^[A-Za-z0-9._+-]+$`)
 
 // backgroundIDRe accepts the ids of background sessions, which become
@@ -55,8 +51,7 @@ func (h *Hosting) resolveClaude(ctx context.Context, env []string) ([]string, er
 	name, extra := cfg.ClaudeCommand[0], cfg.ClaudeCommand[1:]
 	path, ok := h.lookupClaude(ctx, name, env)
 	if !ok {
-		cfgPath, _ := h.ConfigPath()
-		return nil, fmt.Errorf("claude introuvable : réglez claudeCommand dans %s", cfgPath)
+		return nil, fmt.Errorf("claude introuvable : réglez claudeCommand dans %s", h.ConfigPath())
 	}
 	return append([]string{path}, extra...), nil
 }
@@ -102,14 +97,14 @@ func sessionName(dir string) string {
 	return name
 }
 
-// ErrSessionExists reports that a session of the requested name already
+// errSessionExists reports that a session of the requested name already
 // exists in the private server.
-var ErrSessionExists = errors.New("la session existe déjà")
+var errSessionExists = errors.New("la session existe déjà")
 
 // NewAttachSession starts `claude attach id` in the session AttachPrefix+id
 // of the private server, in directory dir, with env as its environment. Only
 // the claude binary of claudeCommand is used: its arguments are for new
-// sessions. It fails with ErrSessionExists when that session runs already.
+// sessions. It fails with errSessionExists when that session runs already.
 func (h *Hosting) NewAttachSession(ctx context.Context, dir, id string, env []string) (tmux.Pane, error) {
 	if h.Self == "" {
 		return tmux.Pane{}, errors.New("chemin de claude-tower inconnu")
@@ -167,9 +162,9 @@ func (h *Hosting) StopBackground(ctx context.Context, id string, env []string) e
 // maxNameRunes is the length of the longest name given to a new session.
 const maxNameRunes = 60
 
-// CleanName returns name without control characters nor surrounding spaces,
+// cleanName returns name without control characters nor surrounding spaces,
 // cut to maxNameRunes characters.
-func CleanName(name string) string {
+func cleanName(name string) string {
 	name = strings.TrimSpace(strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
 			return -1
@@ -186,10 +181,9 @@ func CleanName(name string) string {
 // the cleaned name is empty. The name stays one argument: the command is not
 // parsed by a shell.
 func NameArgs(name string) []string {
-	if name = CleanName(name); name == "" {
+	if name = cleanName(name); name == "" {
 		return nil
 	}
-	// One argument, so that a name starting with "-" is not read as an option.
 	return []string{"--name=" + name}
 }
 
@@ -224,18 +218,17 @@ func (h *Hosting) NewSession(ctx context.Context, dir string, args []string, env
 }
 
 // startSession creates a session called name running command. With unique, a
-// taken name gets a numeric suffix; without, it fails with ErrSessionExists.
+// taken name gets a numeric suffix; without, it fails with errSessionExists.
 func (h *Hosting) startSession(ctx context.Context, srv tmux.Server, dir, name string, unique bool, command []string) (tmux.Pane, error) {
-	confDir, err := h.configDir()
-	if err != nil {
-		return tmux.Pane{}, err
-	}
-	base := []string{"-f", filepath.Join(confDir, tmuxConfFile), "new-session", "-d", "-P",
+	base := []string{"-f", filepath.Join(h.ConfigDir, tmuxConfFile), "new-session", "-d", "-P",
 		"-F", "#{session_id}\t#{pane_id}", "-x", "200", "-y", "50"}
 	if dir != "" {
 		base = append(base, "-c", dir)
 	}
-	var out []byte
+	var (
+		out []byte
+		err error
+	)
 	for attempt := 1; ; attempt++ {
 		candidate := name
 		if attempt > 1 {
@@ -247,7 +240,7 @@ func (h *Hosting) startSession(ctx context.Context, srv tmux.Server, dir, name s
 		}
 		duplicate := strings.Contains(err.Error(), "duplicate session")
 		if duplicate && !unique {
-			return tmux.Pane{}, ErrSessionExists
+			return tmux.Pane{}, errSessionExists
 		}
 		if !duplicate || attempt >= maxNameAttempts {
 			return tmux.Pane{}, fmt.Errorf("new-session : %w", err)
@@ -260,10 +253,11 @@ func (h *Hosting) startSession(ctx context.Context, srv tmux.Server, dir, name s
 	return h.confirmStarted(ctx, srv, sessionID, paneID)
 }
 
-// confirmStarted waits, then returns the pane if it still exists.
+// confirmStarted waits StartupCheckDelay, then returns the pane if it still
+// exists.
 func (h *Hosting) confirmStarted(ctx context.Context, srv tmux.Server, sessionID, paneID string) (tmux.Pane, error) {
 	select {
-	case <-time.After(startupCheckDelay):
+	case <-time.After(h.StartupCheckDelay):
 	case <-ctx.Done():
 		return tmux.Pane{}, ctx.Err()
 	}

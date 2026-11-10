@@ -294,22 +294,22 @@ func TestProcAlive(t *testing.T) {
 
 func TestDefaultAliveByGOOS(t *testing.T) {
 	pid := os.Getpid()
-	if !DefaultAlive("darwin")(pid, "not-a-start-time") {
+	if !defaultAlive("darwin")(pid, "not-a-start-time") {
 		t.Error("darwin: own pid with any procStart must be alive")
 	}
-	if DefaultAlive("darwin")(1<<30, "") {
+	if defaultAlive("darwin")(1<<30, "") {
 		t.Error("darwin: nonexistent pid reported alive")
 	}
-	if DefaultAlive("darwin")(0, "") || DefaultAlive("darwin")(-1, "") {
+	if defaultAlive("darwin")(0, "") || defaultAlive("darwin")(-1, "") {
 		t.Error("darwin: non-positive pid reported alive")
 	}
 	if _, err := os.ReadFile("/proc/self/stat"); err != nil {
 		t.Skip("no /proc")
 	}
-	if DefaultAlive("linux")(pid, "not-a-start-time") {
+	if defaultAlive("linux")(pid, "not-a-start-time") {
 		t.Error("linux: mismatching procStart must be dead")
 	}
-	if !DefaultAlive("linux")(pid, "") {
+	if !defaultAlive("linux")(pid, "") {
 		t.Error("linux: own pid reported dead")
 	}
 }

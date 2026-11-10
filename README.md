@@ -135,5 +135,6 @@ make build    # build/bin/claude-tower
 wails dev -tags webkit2_41   # interface rechargée à chaud
 ```
 
+- `make` lance Go avec `GOFLAGS=-mod=readonly`. Pour interdire tout téléchargement : `make test GO_ENV='GOPROXY=off GOFLAGS=-mod=readonly'`.
 - Le plan d'implémentation est dans `PLAN.md`, et la direction visuelle dans `docs/DESIGN.md`.
 - Les tests d'intégration démarrent de vrais serveurs tmux sur des sockets temporaires. Ils ne touchent jamais à tes sessions.

@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	usage = "usage: claude-tower [bar|list] [--dir <config dir>] [--max-width <n>] [--client <name>]\n" +
+	usage = "usage: claude-tower [bar|list] [--dir <config dir>] [--max-width <n>]\n" +
 		"       claude-tower run [claude arguments...]"
 
 	defaultMaxWidth = 100
@@ -58,7 +58,6 @@ type opts struct {
 	cmd      string
 	dir      string
 	maxWidth int
-	client   string
 }
 
 // parseArgs accepts the flags before and after the optional subcommand.
@@ -68,7 +67,6 @@ func parseArgs(args []string) (opts, error) {
 	fs.SetOutput(io.Discard)
 	fs.StringVar(&o.dir, "dir", "", "")
 	fs.IntVar(&o.maxWidth, "max-width", defaultMaxWidth, "")
-	fs.StringVar(&o.client, "client", "", "")
 	if err := fs.Parse(args); err != nil {
 		return opts{}, err
 	}
@@ -86,8 +84,8 @@ func parseArgs(args []string) (opts, error) {
 	return o, nil
 }
 
-// Subcommands lists the subcommands that Main runs.
-var Subcommands = []string{"run", "exec-env", "bar", "list"}
+// subcommands lists the subcommands that Main runs.
+var subcommands = []string{"run", "exec-env", "bar", "list"}
 
 // IsCLI reports whether args, the command line without the program name, is
 // for Main rather than for the desktop application: it starts with a
@@ -96,7 +94,7 @@ func IsCLI(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	return slices.Contains(Subcommands, args[0]) || strings.HasPrefix(args[0], "-")
+	return slices.Contains(subcommands, args[0]) || strings.HasPrefix(args[0], "-")
 }
 
 // Main runs the command line and returns the process exit code.

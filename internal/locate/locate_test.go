@@ -86,6 +86,45 @@ func TestReadTreeOnThisSystem(t *testing.T) {
 	}
 }
 
+func TestReadTreeLinuxReadsProcAndNotPS(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "20"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "20", "stat"), []byte("20 (sh) S 10 20 20"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run := func(context.Context, io.Reader, string, ...string) ([]byte, error) {
+		t.Error("ps run on linux")
+		return nil, nil
+	}
+	got, err := readTree(context.Background(), run, "linux", dir)
+	if err != nil || !reflect.DeepEqual(got, Tree{20: 10}) {
+		t.Errorf("got %v, %v", got, err)
+	}
+}
+
+func TestReadTreeOtherSystemsRunPS(t *testing.T) {
+	var gotArgs []string
+	run := func(_ context.Context, _ io.Reader, name string, args ...string) ([]byte, error) {
+		gotArgs = append([]string{name}, args...)
+		return []byte("  20 10\n"), nil
+	}
+	got, err := readTree(context.Background(), run, "darwin", t.TempDir())
+	if err != nil || !reflect.DeepEqual(got, Tree{20: 10}) {
+		t.Errorf("got %v, %v", got, err)
+	}
+	if want := []string{"ps", "-A", "-o", "pid=,ppid="}; !reflect.DeepEqual(gotArgs, want) {
+		t.Errorf("command: %v", gotArgs)
+	}
+	run = func(context.Context, io.Reader, string, ...string) ([]byte, error) {
+		return nil, errors.New("ps unavailable")
+	}
+	if _, err := readTree(context.Background(), run, "darwin", t.TempDir()); err == nil {
+		t.Error("ps error ignored")
+	}
+}
+
 func TestDescendants(t *testing.T) {
 	tree := Tree{2: 1, 10: 2, 11: 2, 12: 10, 13: 12, 20: 3, 30: 31, 31: 30}
 	cases := []struct {

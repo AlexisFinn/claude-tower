@@ -15,9 +15,9 @@ import (
 	"claude-tower/internal/tmux"
 )
 
-// ErrUnsupported means that no window can be raised on this system, such as
+// errUnsupported means that no window can be raised on this system, such as
 // under Wayland.
-var ErrUnsupported = errors.New("mise au premier plan non prise en charge sur ce système")
+var errUnsupported = errors.New("mise au premier plan non prise en charge sur ce système")
 
 var run = tmux.ExecRunner(10 * time.Second)
 
@@ -45,13 +45,13 @@ func isX11(display, wayland string) bool {
 // Raise brings to the foreground the window of the first process of pids that
 // owns one.
 func Raise(pids []int) error {
-	switch {
-	case runtime.GOOS == "darwin":
-		return raiseMacOS(context.Background(), pids, run)
-	case runtime.GOOS == "linux" && isX11(os.Getenv("DISPLAY"), os.Getenv("WAYLAND_DISPLAY")):
-		return raiseX11(pids)
+	if !Supported() {
+		return errUnsupported
 	}
-	return ErrUnsupported
+	if runtime.GOOS == "darwin" {
+		return raiseMacOS(context.Background(), pids, run)
+	}
+	return raiseX11(pids)
 }
 
 // firstAppPID returns the first pid whose executable lies in an application

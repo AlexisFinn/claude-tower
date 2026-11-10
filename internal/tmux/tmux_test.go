@@ -84,7 +84,7 @@ func TestExecPrependsSocket(t *testing.T) {
 }
 
 func TestExecRunnerIncludesStderr(t *testing.T) {
-	_, err := ExecRunner(DefaultTimeout)(context.Background(), nil, "sh", "-c", "echo oops >&2; exit 3")
+	_, err := ExecRunner(defaultTimeout)(context.Background(), nil, "sh", "-c", "echo oops >&2; exit 3")
 	if err == nil || !strings.Contains(err.Error(), "oops") {
 		t.Errorf("stderr missing from %v", err)
 	}
@@ -112,26 +112,26 @@ func TestExecRunnerTimeoutWithLingeringChild(t *testing.T) {
 }
 
 func TestExecRunnerKeepsOutputWhenChildHoldsPipe(t *testing.T) {
-	out, err := ExecRunner(DefaultTimeout)(context.Background(), nil, "sh", "-c", "echo hello; sleep 1 &")
+	out, err := ExecRunner(defaultTimeout)(context.Background(), nil, "sh", "-c", "echo hello; sleep 1 &")
 	if !errors.Is(err, exec.ErrWaitDelay) || string(out) != "hello\n" {
 		t.Errorf("out=%q err=%v", out, err)
 	}
 }
 
 func TestExecRunnerStdin(t *testing.T) {
-	out, err := ExecRunner(DefaultTimeout)(context.Background(), strings.NewReader("hello"), "cat")
+	out, err := ExecRunner(defaultTimeout)(context.Background(), strings.NewReader("hello"), "cat")
 	if err != nil || string(out) != "hello" {
 		t.Errorf("out=%q err=%v", out, err)
 	}
 }
 
-const paneLines = "%1\t100\t$2\tclaude-tower-view-1-1\t@1\t1\t\t80\t24\t1700000000\t/w\n" +
-	"%1\t100\t$1\tmain\t@1\t1\t\t80\t24\t1700000000\t/w\n" +
-	"%2\t101\t$1\tmain\t@1\t0\t\t80\t24\t1700000000\t/w\n" +
-	"%3\t102\t$3\tg1\t@3\t1\tgrp\t120\t40\t1700000000\t/w\tab\n" +
-	"%3\t102\t$4\tg2\t@3\t1\tgrp\t120\t40\t1700000000\t/w\tab\n" +
+const paneLines = "%1\t100\t$2\tclaude-tower-view-1-1\t@1\t1\t\t1700000000\t/w\n" +
+	"%1\t100\t$1\tmain\t@1\t1\t\t1700000000\t/w\n" +
+	"%2\t101\t$1\tmain\t@1\t0\t\t1700000000\t/w\n" +
+	"%3\t102\t$3\tg1\t@3\t1\tgrp\t1700000000\t/w\tab\n" +
+	"%3\t102\t$4\tg2\t@3\t1\tgrp\t1700000000\t/w\tab\n" +
 	"broken line\n" +
-	"%9\tnotapid\t$1\tmain\t@1\t1\t\t80\t24\t1700000000\t/w\n"
+	"%9\tnotapid\t$1\tmain\t@1\t1\t\t1700000000\t/w\n"
 
 func TestPanesParsesExcludesViewsAndDeduplicates(t *testing.T) {
 	r := &recorder{reply: func([]string) ([]byte, error) { return []byte(paneLines), nil }}
@@ -152,7 +152,7 @@ func TestPanesParsesExcludesViewsAndDeduplicates(t *testing.T) {
 	}
 	p1, p3 := panes[0], panes[2]
 	if p1.PID != 100 || p1.SessionID != "$1" || p1.SessionName != "main" || p1.WindowID != "@1" || !p1.Active ||
-		p1.SessionGroup != "" || p1.Width != 80 || p1.Height != 24 || p1.Server.Socket != "/s/sock" {
+		p1.SessionGroup != "" || p1.Server.Socket != "/s/sock" {
 		t.Errorf("pane %%1: %+v", p1)
 	}
 	if panes[1].Active {
@@ -161,7 +161,7 @@ func TestPanesParsesExcludesViewsAndDeduplicates(t *testing.T) {
 	if !p1.Created.Equal(time.Unix(1700000000, 0)) || p1.Cwd != "/w" {
 		t.Errorf("pane %%1 created %v cwd %q", p1.Created, p1.Cwd)
 	}
-	if p3.SessionID != "$3" || p3.SessionGroup != "grp" || p3.Width != 120 || p3.Height != 40 || p3.Cwd != "/w\tab" {
+	if p3.SessionID != "$3" || p3.SessionGroup != "grp" || p3.Cwd != "/w\tab" {
 		t.Errorf("pane %%3: %+v", p3)
 	}
 }

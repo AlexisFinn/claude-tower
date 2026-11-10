@@ -134,6 +134,17 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Fatalf("timeout waiting for %s", what)
 }
 
+// heldOutput returns the number of bytes a terminal holds for the frontend
+// and whether its output is over.
+func heldOutput(m *Manager, id int) (held int, eof bool) {
+	m.mu.Lock()
+	t := m.terms[id]
+	m.mu.Unlock()
+	t.out.mu.Lock()
+	defer t.out.mu.Unlock()
+	return len(t.out.pending), t.out.eof
+}
+
 // viewSessions lists the names of the view sessions of the server.
 func viewSessions(srv tmux.Server) []string {
 	out, err := srv.Exec(context.Background(), nil, "list-sessions", "-F", "#{session_name}")

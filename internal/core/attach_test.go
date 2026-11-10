@@ -143,9 +143,9 @@ func TestCardsStartAttachSession(t *testing.T) {
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		for _, cmd := range e.fake.commands(e.privSock) {
-			if i := indexOf(cmd, "-s"); cmd[0] == "-f" && i >= 0 && cmd[i+1] == tmux.AttachPrefix+"504d303c" {
-				if cmd[len(cmd)-2] != "attach" || cmd[len(cmd)-1] != "504d303c" {
+		for _, cmd := range e.fake.newSessions(e.privSock) {
+			if i := indexOf(cmd, "-s"); i >= 0 && cmd[i+1] == tmux.AttachPrefix+"504d303c" {
+				if !reflect.DeepEqual(cmd[len(cmd)-2:], []string{"attach", "504d303c"}) {
 					t.Errorf("command: %v", cmd)
 				}
 				return

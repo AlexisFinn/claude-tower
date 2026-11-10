@@ -1,4 +1,4 @@
-GO_ENV := GOPROXY=off GOFLAGS=-mod=readonly
+GO_ENV ?= GOFLAGS=-mod=readonly
 PREFIX ?= $(HOME)/.local
 
 ifeq ($(shell uname),Linux)

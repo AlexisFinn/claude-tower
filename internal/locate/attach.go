@@ -19,8 +19,12 @@ type Attachments map[int]string
 // ReadAttachments lists the clients attached to background sessions of Claude
 // Code. Linux reads /proc; other systems run ps through run.
 func ReadAttachments(ctx context.Context, run tmux.Runner) (Attachments, error) {
-	if runtime.GOOS == "linux" {
-		return readProcAttachments("/proc")
+	return readAttachments(ctx, run, runtime.GOOS, "/proc")
+}
+
+func readAttachments(ctx context.Context, run tmux.Runner, goos, procDir string) (Attachments, error) {
+	if goos == "linux" {
+		return readProcAttachments(procDir)
 	}
 	out, err := run(ctx, nil, "ps", "-A", "-o", "pid=,args=")
 	if err != nil {
@@ -44,7 +48,7 @@ func readProcAttachments(dir string) (Attachments, error) {
 		if err != nil || !bytes.Contains(data, []byte("attach")) {
 			continue
 		}
-		if id, ok := AttachTarget(strings.Split(strings.TrimRight(string(data), "\x00"), "\x00")); ok {
+		if id, ok := attachTarget(strings.Split(strings.TrimRight(string(data), "\x00"), "\x00")); ok {
 			out[pid] = id
 		}
 	}
@@ -64,17 +68,17 @@ func parsePSAttachments(out string) Attachments {
 		if err != nil {
 			continue
 		}
-		if id, ok := AttachTarget(f[1:]); ok {
+		if id, ok := attachTarget(f[1:]); ok {
 			res[pid] = id
 		}
 	}
 	return res
 }
 
-// AttachTarget returns the session id of the command line of a claude
+// attachTarget returns the session id of the command line of a claude
 // attach client: a program whose name contains "claude", possibly run by
 // node, bun or deno, options only, the word attach, then the id.
-func AttachTarget(argv []string) (string, bool) {
+func attachTarget(argv []string) (string, bool) {
 	if len(argv) < 3 {
 		return "", false
 	}

@@ -21,9 +21,8 @@ type snapshot struct {
 	// pending lists the panes of the private server that host no registered
 	// session; panes also holds them, keyed by pane PID.
 	pending     []tmux.Pane
-	privateOK   bool            // the private server answered
-	privateGone bool            // the private server is not running
-	privateIDs  map[string]bool // IDs of every pane the private server listed
+	privateOK   bool // the private server answered
+	privateGone bool // the private server is not running
 	// listedPrivate holds every pane the private server listed.
 	listedPrivate []tmux.Pane
 	// background holds the short id of each background session, keyed by PID.
@@ -66,7 +65,6 @@ func (c *Core) refresh(ctx context.Context) (snapshot, error) {
 	var panes []tmux.Pane
 	clients := map[string][]tmux.Client{}
 	privateOK, privateGone := false, false
-	privateIDs := map[string]bool{}
 	var listedPrivate []tmux.Pane
 	for _, st := range states {
 		if !st.ok {
@@ -79,9 +77,6 @@ func (c *Core) refresh(ctx context.Context) (snapshot, error) {
 		}
 		if st.socket == private {
 			privateOK = true
-			for _, p := range st.panes {
-				privateIDs[p.ID] = true
-			}
 			listedPrivate = st.panes
 		}
 		panes = append(panes, st.panes...)
@@ -95,7 +90,6 @@ func (c *Core) refresh(ctx context.Context) (snapshot, error) {
 		private:       private,
 		privateOK:     privateOK,
 		privateGone:   privateGone,
-		privateIDs:    privateIDs,
 		listedPrivate: listedPrivate,
 		userComplete:  userComplete,
 	}

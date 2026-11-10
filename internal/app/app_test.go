@@ -3,11 +3,16 @@ package app
 import (
 	"context"
 	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
 
 	"claude-tower/internal/core"
+	"claude-tower/internal/hosting"
 	"claude-tower/internal/tmux"
 )
 
@@ -15,6 +20,7 @@ type fakeEngine struct {
 	newSessions []string
 	newNames    []string
 	cards       []core.Card
+	onSweep     func()
 }
 
 func (f *fakeEngine) Cards(context.Context) ([]core.Card, error) { return f.cards, nil }
@@ -33,7 +39,11 @@ func (f *fakeEngine) NewSession(_ context.Context, dir, name string) error {
 func (f *fakeEngine) Kill(context.Context, int) error                  { return nil }
 func (f *fakeEngine) Fit(context.Context, int, int, int) (bool, error) { return true, nil }
 func (f *fakeEngine) PaneOf(int) (tmux.Pane, bool)                     { return tmux.Pane{}, false }
-func (f *fakeEngine) Sweep(context.Context)                            {}
+func (f *fakeEngine) Sweep(context.Context) {
+	if f.onSweep != nil {
+		f.onSweep()
+	}
+}
 func (f *fakeEngine) StartFailures() []core.StartFailure {
 	return []core.StartFailure{{Name: "proj"}}
 }
@@ -233,5 +243,134 @@ func TestStartupWarningIsEmptyWithoutWarning(t *testing.T) {
 	a := started(&fakeEngine{}, fakeDialogs{})
 	if a.StartupWarning() != "" {
 		t.Errorf("StartupWarning: %q", a.StartupWarning())
+	}
+}
+
+// startProbe records what start does, in order, with a Hosting whose tmux and
+// login shell are fakes.
+type startProbe struct {
+	events        []string
+	configDir     string
+	coreErr       error
+	hostingErr    error
+	sessionConfig string
+}
+
+func (p *startProbe) add(event string) { p.events = append(p.events, event) }
+
+func (p *startProbe) app(t *testing.T) *App {
+	t.Helper()
+	root := t.TempDir()
+	if p.configDir == "" {
+		p.configDir = filepath.Join(root, "cfg")
+	}
+	a := New(noEmit{}, fakeDialogs{}, nil)
+	a.newHosting = func([]string) (*hosting.Hosting, error) {
+		p.add("hosting")
+		if p.hostingErr != nil {
+			return nil, p.hostingErr
+		}
+		return &hosting.Hosting{
+			SocketDir: filepath.Join(root, "run"),
+			ConfigDir: p.configDir,
+			Env:       []string{"HOME=/h"},
+			Shell:     "/bin/fake-shell",
+			ShellRun: func(context.Context, io.Reader, string, ...string) ([]byte, error) {
+				p.add("login-shell")
+				return []byte("CLAUDE_CONFIG_DIR=/resolved\x00"), nil
+			},
+			Tmux: func(_ context.Context, _ io.Reader, name string, args ...string) ([]byte, error) {
+				if name == "infocmp" {
+					p.add("infocmp")
+					return nil, nil
+				}
+				p.add(args[len(args)-1])
+				return nil, errors.New("no server running")
+			},
+		}, nil
+	}
+	a.newCore = func(h *hosting.Hosting) (Engine, error) {
+		p.add("core")
+		p.sessionConfig = h.SessionConfigDir
+		if p.coreErr != nil {
+			return nil, p.coreErr
+		}
+		return &fakeEngine{onSweep: func() { p.add("sweep") }}, nil
+	}
+	return a
+}
+
+func TestStartResolvesConfigDirBeforeCoreAndWritesConfigBeforeSweep(t *testing.T) {
+	p := &startProbe{}
+	a := p.app(t)
+	Startup(a)
+	defer Shutdown(a)
+	want := []string{"hosting", "login-shell", "core", "infocmp", "list-sessions", "sweep"}
+	if !reflect.DeepEqual(p.events, want) {
+		t.Errorf("events %v, want %v", p.events, want)
+	}
+	if p.sessionConfig != "/resolved" {
+		t.Errorf("config directory seen by core: %q", p.sessionConfig)
+	}
+	if a.StartupError() != "" || a.StartupWarning() != "" {
+		t.Errorf("StartupError %q, StartupWarning %q", a.StartupError(), a.StartupWarning())
+	}
+	if _, err := a.Cards(); err != nil {
+		t.Errorf("Cards: %v", err)
+	}
+}
+
+func TestStartHostingErrorIsTheStartupError(t *testing.T) {
+	p := &startProbe{hostingErr: errors.New("pas de dossier personnel")}
+	a := p.app(t)
+	Startup(a)
+	defer Shutdown(a)
+	if a.StartupError() != "pas de dossier personnel" {
+		t.Errorf("StartupError: %q", a.StartupError())
+	}
+	if want := []string{"hosting"}; !reflect.DeepEqual(p.events, want) {
+		t.Errorf("events %v, want %v", p.events, want)
+	}
+	if _, err := a.Cards(); err == nil {
+		t.Error("Cards succeeded")
+	}
+}
+
+func TestStartCoreErrorIsTheStartupError(t *testing.T) {
+	p := &startProbe{coreErr: errors.New("tmux introuvable")}
+	a := p.app(t)
+	Startup(a)
+	defer Shutdown(a)
+	if a.StartupError() != "tmux introuvable" {
+		t.Errorf("StartupError: %q", a.StartupError())
+	}
+	if want := []string{"hosting", "login-shell", "core"}; !reflect.DeepEqual(p.events, want) {
+		t.Errorf("events %v, want %v", p.events, want)
+	}
+	if _, err := a.Cards(); err == nil {
+		t.Error("Cards succeeded")
+	}
+}
+
+func TestStartConfigErrorIsAWarningAndDoesNotBlock(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := &startProbe{configDir: filepath.Join(file, "cfg")}
+	a := p.app(t)
+	Startup(a)
+	defer Shutdown(a)
+	if a.StartupWarning() == "" {
+		t.Error("no startup warning")
+	}
+	if a.StartupError() != "" {
+		t.Errorf("StartupError: %q", a.StartupError())
+	}
+	if want := []string{"hosting", "login-shell", "core", "sweep"}; !reflect.DeepEqual(p.events, want) {
+		t.Errorf("events %v, want %v", p.events, want)
+	}
+	if _, err := a.Cards(); err != nil {
+		t.Errorf("Cards: %v", err)
 	}
 }

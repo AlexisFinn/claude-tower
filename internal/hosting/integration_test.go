@@ -63,12 +63,13 @@ func newFixture(t *testing.T, claudeCommand string) fixture {
 		t.Fatal(err)
 	}
 	h := &hosting.Hosting{
-		SocketDir: filepath.Join(dir, "run"),
-		ConfigDir: filepath.Join(dir, "cfg"),
-		Self:      self,
-		Tmux:      tmux.ExecRunner(10 * time.Second),
-		Bin:       bin,
-		Env:       []string{"PATH=" + os.Getenv("PATH"), "TERM=xterm"},
+		SocketDir:         filepath.Join(dir, "run"),
+		ConfigDir:         filepath.Join(dir, "cfg"),
+		Self:              self,
+		Tmux:              tmux.ExecRunner(10 * time.Second),
+		Bin:               bin,
+		Env:               []string{"PATH=" + os.Getenv("PATH"), "TERM=xterm"},
+		StartupCheckDelay: time.Second,
 	}
 	if err := os.MkdirAll(h.ConfigDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -82,7 +83,6 @@ func newFixture(t *testing.T, claudeCommand string) fixture {
 		t.Fatal(err)
 	}
 	srv := tmux.Server{Socket: sock, Bin: bin, Run: h.Tmux}
-	t.Cleanup(hosting.SetStartupCheckDelay(time.Second))
 	t.Cleanup(func() {
 		srv.Exec(context.Background(), nil, "kill-server")
 		os.RemoveAll(dir)

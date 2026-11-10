@@ -51,7 +51,7 @@ type Session struct {
 // Reader reads the session registry of one config directory.
 type Reader struct {
 	Dir      string                               // absolute config dir, such as the expansion of ~/.claude
-	Alive    func(pid int, procStart string) bool // default: DefaultAlive(runtime.GOOS)
+	Alive    func(pid int, procStart string) bool // default: defaultAlive(runtime.GOOS)
 	ReadFile func(path string) ([]byte, error)    // default: os.ReadFile
 }
 
@@ -59,6 +59,19 @@ var (
 	sessionFileRe = regexp.MustCompile(`^([0-9]+)\.json$`)
 	paneRe        = regexp.MustCompile(`^%[0-9]+$`)
 )
+
+// funcs returns the liveness check and the file reader, with their defaults
+// where the Reader leaves them nil.
+func (r Reader) funcs() (alive func(pid int, procStart string) bool, read func(string) ([]byte, error)) {
+	alive, read = r.Alive, r.ReadFile
+	if alive == nil {
+		alive = defaultAlive(runtime.GOOS)
+	}
+	if read == nil {
+		read = os.ReadFile
+	}
+	return alive, read
+}
 
 // Sessions returns the live sessions found in the registry. A missing
 // sessions directory yields an empty list; an error is returned only when the
@@ -72,13 +85,7 @@ func (r Reader) Sessions() ([]Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	alive, read := r.Alive, r.ReadFile
-	if alive == nil {
-		alive = DefaultAlive(runtime.GOOS)
-	}
-	if read == nil {
-		read = os.ReadFile
-	}
+	alive, read := r.funcs()
 	var out []Session
 	for _, e := range entries {
 		m := sessionFileRe.FindStringSubmatch(e.Name())
@@ -100,13 +107,7 @@ func (r Reader) Sessions() ([]Session, error) {
 // Session reads the registry file of a single session. ok is false when the
 // file is missing, must be skipped, or the process is no longer alive.
 func (r Reader) Session(pid int) (s Session, ok bool) {
-	alive, read := r.Alive, r.ReadFile
-	if alive == nil {
-		alive = DefaultAlive(runtime.GOOS)
-	}
-	if read == nil {
-		read = os.ReadFile
-	}
+	alive, read := r.funcs()
 	s, procStart, ok := readSession(read, filepath.Join(r.Dir, "sessions", strconv.Itoa(pid)+".json"), pid)
 	if !ok || !alive(pid, procStart) {
 		return Session{}, false
@@ -265,10 +266,10 @@ func truncateRunes(s string, n int) string {
 	return string(r[:n])
 }
 
-// DefaultAlive returns the liveness check for the given GOOS value. Linux
+// defaultAlive returns the liveness check for the given GOOS value. Linux
 // compares the process start time with procStart to rule out a reused PID;
 // other systems only probe the PID, so a reused PID can look alive.
-func DefaultAlive(goos string) func(pid int, procStart string) bool {
+func defaultAlive(goos string) func(pid int, procStart string) bool {
 	if goos == "linux" {
 		return procAlive
 	}

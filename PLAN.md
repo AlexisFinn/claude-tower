@@ -222,7 +222,7 @@ Un mutex **par volet** (table globale du paquet, clé socket + `%N`) empêche de
 
 **Injection** : tout passe par une valeur `Hosting{SocketDir, ConfigDir, Self string; Tmux tmux.Runner; Bin string; Env []string; ClaudeConfigDir string}`, construite par `core.Options` ou par `cli`. `Self` est le chemin du binaire `claude-tower` utilisé pour `exec-env` : `os.Executable()` en vrai, le binaire de test en test. Les tests ne touchent donc jamais aux vrais dossiers. Le `TestMain` des tests d'intégration délègue `exec-env` à `cli`.
 
-**Socket privée** : `PrivateSocket() (string, error)` donne la valeur par défaut de `SocketDir`.
+**Socket privée** : `NewSystem` renseigne `SocketDir` avec la valeur par défaut.
 - Linux : `$XDG_RUNTIME_DIR/claude-tower/tmux.sock`, sinon `~/.local/state/claude-tower/tmux.sock`.
 - macOS : `~/Library/Application Support/claude-tower/tmux.sock`.
 - Le dossier est créé en `0700`. S'il existe, `Lstat` vérifie qu'il appartient à l'utilisateur, qu'il est en `0700` et que ce n'est pas un lien symbolique ; sinon, erreur.

@@ -70,7 +70,6 @@ func NewManager(panes PaneSource, emit Emitter, env []string) *Manager {
 }
 
 type terminal struct {
-	id       int
 	srv      tmux.Server
 	view     tmux.ViewSession
 	cmd      *exec.Cmd
@@ -159,7 +158,7 @@ func (m *Manager) attach(id int, srv tmux.Server, view tmux.ViewSession, cols, r
 		return nil, fmt.Errorf("attache à tmux : %w", err)
 	}
 	t := &terminal{
-		id: id, srv: srv, view: view, cmd: cmd, file: file,
+		srv: srv, view: view, cmd: cmd, file: file,
 		out:      newStream(m.emit, fmt.Sprintf("term:%d:data", id), fmt.Sprintf("term:%d:exit", id)),
 		stop:     make(chan struct{}),
 		readDone: make(chan struct{}),

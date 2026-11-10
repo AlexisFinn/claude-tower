@@ -14,9 +14,7 @@ import (
 	"claude-tower/internal/tmux"
 )
 
-func init() { startupCheckDelay = 0 }
-
-const paneLine = "%7\t4242\t$5\tproj\t@3\t1\t\t200\t50\t1700000000\t/proj\n"
+const paneLine = "%7\t4242\t$5\tproj\t@3\t1\t\t1700000000\t/proj\n"
 
 // sessionRecorder answers like a tmux server that starts one session.
 func sessionRecorder(duplicates int) *recorder {
@@ -412,7 +410,7 @@ func TestNewAttachSessionDoesNotRename(t *testing.T) {
 	rec := sessionRecorder(1)
 	h := newHosting(t, rec)
 	h.Env = []string{"PATH=" + filepath.Dir(writeExecutable(t, t.TempDir(), "claude"))}
-	if _, err := h.NewAttachSession(context.Background(), "/work", "ab12", h.Env); !errors.Is(err, ErrSessionExists) {
+	if _, err := h.NewAttachSession(context.Background(), "/work", "ab12", h.Env); !errors.Is(err, errSessionExists) {
 		t.Errorf("err: %v", err)
 	}
 	for _, id := range []string{"a b", "-x", "a;b", `a"b`, "a/b", ""} {
@@ -455,8 +453,8 @@ func TestCleanName(t *testing.T) {
 		{`il dit "oui" et 'non' $HOME; rm -rf /`, `il dit "oui" et 'non' $HOME; rm -rf /`},
 	}
 	for _, tt := range tests {
-		if got := CleanName(tt.in); got != tt.want {
-			t.Errorf("CleanName(%q) = %q, want %q", tt.in, got, tt.want)
+		if got := cleanName(tt.in); got != tt.want {
+			t.Errorf("cleanName(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
 }

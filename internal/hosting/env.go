@@ -71,13 +71,7 @@ func unsetEnv(env []string, name string) []string {
 
 // setEnv returns env with name set to value, replacing any earlier entry.
 func setEnv(env []string, name, value string) []string {
-	out := make([]string, 0, len(env)+1)
-	for _, e := range env {
-		if envName(e) != name {
-			out = append(out, e)
-		}
-	}
-	return append(out, name+"="+value)
+	return append(unsetEnv(env, name), name+"="+value)
 }
 
 // SessionEnv returns base without the variables that describe the terminal of
@@ -225,11 +219,11 @@ func (h *Hosting) runShell(ctx context.Context, command string) ([]byte, error) 
 	return out, nil
 }
 
-// LoginShellEnv returns the environment of the calling process completed with
+// loginShellEnv returns the environment of the calling process completed with
 // that of an interactive login shell: the variables of the calling process
 // take precedence, except PATH, which lists the shell's entries first and then
 // the calling process's other ones. The result is computed once.
-func (h *Hosting) LoginShellEnv(ctx context.Context) ([]string, error) {
+func (h *Hosting) loginShellEnv(ctx context.Context) ([]string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.loginDone {
@@ -246,12 +240,12 @@ func (h *Hosting) LoginShellEnv(ctx context.Context) ([]string, error) {
 
 // AppEnv returns the environment sessions started by the application inherit:
 // the caller's own, or, when the application has no terminal (desktop
-// launcher), completed with the login shell's as LoginShellEnv does.
+// launcher), completed with the login shell's as loginShellEnv does.
 func (h *Hosting) AppEnv(ctx context.Context) []string {
 	if envHas(h.Env, "TERM") {
 		return h.Env
 	}
-	if env, err := h.LoginShellEnv(ctx); err == nil {
+	if env, err := h.loginShellEnv(ctx); err == nil {
 		return env
 	}
 	return h.Env

@@ -19,17 +19,16 @@ const AttachPrefix = "claude-tower-bg-"
 
 // Pane is one tmux pane.
 type Pane struct {
-	Server        Server
-	ID            string // "%N"
-	PID           int    // pane_pid
-	SessionID     string // "$N"
-	SessionName   string
-	WindowID      string // "@N"
-	Active        bool   // pane_active
-	SessionGroup  string // session_group, "" when ungrouped
-	Width, Height int
-	Created       time.Time // session_created; zero when unknown
-	Cwd           string    // pane_current_path
+	Server       Server
+	ID           string // "%N"
+	PID          int    // pane_pid
+	SessionID    string // "$N"
+	SessionName  string
+	WindowID     string    // "@N"
+	Active       bool      // pane_active
+	SessionGroup string    // session_group, "" when ungrouped
+	Created      time.Time // session_created; zero when unknown
+	Cwd          string    // pane_current_path
 }
 
 // Client is one tmux client.
@@ -42,7 +41,7 @@ type Client struct {
 }
 
 const (
-	paneFormat   = "#{pane_id}\t#{pane_pid}\t#{session_id}\t#{session_name}\t#{window_id}\t#{pane_active}\t#{session_group}\t#{pane_width}\t#{pane_height}\t#{session_created}\t#{pane_current_path}"
+	paneFormat   = "#{pane_id}\t#{pane_pid}\t#{session_id}\t#{session_name}\t#{window_id}\t#{pane_active}\t#{session_group}\t#{session_created}\t#{pane_current_path}"
 	clientFormat = "#{client_name}\t#{client_pid}\t#{session_id}\t#{session_name}\t#{session_group}\t#{client_activity}"
 )
 
@@ -69,21 +68,19 @@ func parsePanes(s Server, out string) []Pane {
 	seen := map[string]bool{}
 	for _, line := range strings.Split(out, "\n") {
 		// The path comes last, so that a tab in it stays in the path.
-		f := strings.SplitN(line, "\t", 11)
-		if len(f) != 11 || strings.HasPrefix(f[3], ViewPrefix) || seen[f[0]] {
+		f := strings.SplitN(line, "\t", 9)
+		if len(f) != 9 || strings.HasPrefix(f[3], ViewPrefix) || seen[f[0]] {
 			continue
 		}
-		pid, err1 := strconv.Atoi(f[1])
-		w, err2 := strconv.Atoi(f[7])
-		h, err3 := strconv.Atoi(f[8])
-		if err1 != nil || err2 != nil || err3 != nil {
+		pid, err := strconv.Atoi(f[1])
+		if err != nil {
 			continue
 		}
 		seen[f[0]] = true
 		panes = append(panes, Pane{
 			Server: s, ID: f[0], PID: pid, SessionID: f[2], SessionName: f[3],
-			WindowID: f[4], Active: f[5] == "1", SessionGroup: f[6], Width: w, Height: h,
-			Created: unixTime(f[9]), Cwd: f[10],
+			WindowID: f[4], Active: f[5] == "1", SessionGroup: f[6],
+			Created: unixTime(f[7]), Cwd: f[8],
 		})
 	}
 	return panes

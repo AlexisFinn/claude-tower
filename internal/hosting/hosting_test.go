@@ -20,17 +20,17 @@ func TestPrivateSocketDir(t *testing.T) {
 		{"macos", "darwin", map[string]string{"XDG_RUNTIME_DIR": "/ignored"}, "/home/u/Library/Application Support/claude-tower"},
 	}
 	for _, c := range cases {
-		if got := PrivateSocketDir(c.goos, "/home/u", env(c.env)); got != c.want {
+		if got := privateSocketDir(c.goos, "/home/u", env(c.env)); got != c.want {
 			t.Errorf("%s: got %q want %q", c.name, got, c.want)
 		}
 	}
 }
 
 func TestDefaultConfigDir(t *testing.T) {
-	if got := DefaultConfigDir("linux", "/home/u"); got != "/home/u/.config/claude-tower" {
+	if got := defaultConfigDir("linux", "/home/u"); got != "/home/u/.config/claude-tower" {
 		t.Errorf("linux: %q", got)
 	}
-	if got := DefaultConfigDir("darwin", "/home/u"); got != "/home/u/Library/Application Support/claude-tower" {
+	if got := defaultConfigDir("darwin", "/home/u"); got != "/home/u/Library/Application Support/claude-tower" {
 		t.Errorf("darwin: %q", got)
 	}
 }
@@ -109,7 +109,7 @@ func TestNewSystem(t *testing.T) {
 
 func TestNewSystemPassesConfiguredClaudeDirToSessions(t *testing.T) {
 	home := t.TempDir()
-	cfgDir := DefaultConfigDir(runtime.GOOS, home)
+	cfgDir := defaultConfigDir(runtime.GOOS, home)
 	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
 		t.Fatal(err)
 	}

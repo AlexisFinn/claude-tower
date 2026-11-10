@@ -32,10 +32,7 @@ func TestPromptPastes(t *testing.T) {
 	if err := c.Prompt(context.Background(), 100, "hello\nworld"); err != nil {
 		t.Fatal(err)
 	}
-	var words []string
-	for _, cmd := range e.fake.commands(e.userSock) {
-		words = append(words, cmd[0])
-	}
+	words := e.fake.commandNames(e.userSock)
 	want := []string{"list-panes", "list-clients", "list-panes", "if-shell", "load-buffer", "paste-buffer", "send-keys"}
 	if !reflect.DeepEqual(words, want) {
 		t.Errorf("commands: %v want %v", words, want)
@@ -53,7 +50,7 @@ func TestPromptRefusedWhenStatusChangedAfterSnapshot(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 	for _, cmd := range e.fake.commands(e.userSock) {
-		if cmd[0] == "paste-buffer" || cmd[0] == "load-buffer" {
+		if subcommand(cmd) == "paste-buffer" || subcommand(cmd) == "load-buffer" {
 			t.Errorf("text pasted: %v", cmd)
 		}
 	}
@@ -78,7 +75,7 @@ func TestPromptRefusals(t *testing.T) {
 		t.Errorf("vanished pane: %v", err)
 	}
 	for _, cmd := range e.fake.commands(e.userSock) {
-		if cmd[0] == "paste-buffer" {
+		if subcommand(cmd) == "paste-buffer" {
 			t.Error("text pasted")
 		}
 	}
@@ -128,7 +125,7 @@ func focusEnv(t *testing.T) (*env, *Core) {
 func switchCalls(e *env) [][]string {
 	var out [][]string
 	for _, cmd := range e.fake.commands(e.userSock) {
-		if cmd[0] == "switch-client" {
+		if subcommand(cmd) == "switch-client" {
 			out = append(out, cmd)
 		}
 	}
@@ -279,12 +276,7 @@ func startSession(t *testing.T, e *env) string {
 	if err := e.core().NewSession(context.Background(), "/work/proj", ""); err != nil {
 		t.Fatal(err)
 	}
-	var command []string
-	for _, cmd := range e.fake.commands(e.privSock) {
-		if cmd[0] == "-f" {
-			command = cmd
-		}
-	}
+	command := e.fake.lastNewSession(e.privSock)
 	i := indexOf(command, "exec-env")
 	if i < 0 {
 		t.Fatalf("no session started: %v", e.fake.calls)
@@ -424,7 +416,7 @@ func TestKillStopsViewSessionsCreatedAfterTheSnapshot(t *testing.T) {
 	}
 	var kills [][]string
 	for _, cmd := range e.fake.commands(e.privSock) {
-		if cmd[0] == "kill-session" {
+		if subcommand(cmd) == "kill-session" {
 			kills = append(kills, cmd)
 		}
 	}
@@ -452,12 +444,7 @@ func TestNewSessionNameBecomesNameArgument(t *testing.T) {
 		if err := e.core().NewSession(context.Background(), "/work/proj", tt.name); err != nil {
 			t.Fatal(err)
 		}
-		var command []string
-		for _, cmd := range e.fake.commands(e.privSock) {
-			if cmd[0] == "-f" {
-				command = cmd
-			}
-		}
+		command := e.fake.lastNewSession(e.privSock)
 		i := indexOf(command, "exec-env")
 		if i < 0 {
 			t.Fatalf("%q: no session started: %v", tt.name, e.fake.calls)

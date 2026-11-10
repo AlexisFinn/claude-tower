@@ -33,7 +33,7 @@ func TestParseArgs(t *testing.T) {
 	}{
 		{"flag after command", []string{"bar", "--dir", "X"}, opts{cmd: "bar", dir: "X", maxWidth: 100}, false},
 		{"flag before command", []string{"--dir", "X", "bar"}, opts{cmd: "bar", dir: "X", maxWidth: 100}, false},
-		{"flags without command", []string{"--dir", "X", "--client", "Y"}, opts{dir: "X", client: "Y", maxWidth: 100}, false},
+		{"flags without command", []string{"--dir", "X"}, opts{dir: "X", maxWidth: 100}, false},
 		{"flags on both sides", []string{"--dir", "X", "bar", "--max-width", "30"}, opts{cmd: "bar", dir: "X", maxWidth: 30}, false},
 		{"unknown command parses", []string{"nope"}, opts{cmd: "nope", maxWidth: 100}, false},
 		{"two positionals", []string{"bar", "list"}, opts{}, true},
@@ -321,8 +321,8 @@ func TestTmuxLocations(t *testing.T) {
 	sessions := []registry.Session{{PID: 300}, {PID: 400}, {PID: 500}}
 	tree := locate.Tree{300: 200, 200: 100, 400: 450, 450: 1, 500: 600}
 	readTree := func(context.Context, tmux.Runner) (locate.Tree, error) { return tree, nil }
-	pub := tmux.Server{Socket: "/s/default", Run: fixedRunner("%1\t100\t$1\tmain\t@1\t1\t\t80\t24\t1700000000\t/w\n")}
-	priv := tmux.Server{Socket: "/s/private", Run: fixedRunner("%2\t600\t$2\tpriv\t@2\t1\t\t80\t24\t1700000000\t/w\n")}
+	pub := tmux.Server{Socket: "/s/default", Run: fixedRunner("%1\t100\t$1\tmain\t@1\t1\t\t1700000000\t/w\n")}
+	priv := tmux.Server{Socket: "/s/private", Run: fixedRunner("%2\t600\t$2\tpriv\t@2\t1\t\t1700000000\t/w\n")}
 	dead := tmux.Server{Socket: "/s/dead", Run: func(context.Context, io.Reader, string, ...string) ([]byte, error) {
 		return nil, errors.New("no server running")
 	}}

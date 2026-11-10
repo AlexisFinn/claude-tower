@@ -27,7 +27,7 @@ func TestSanitize(t *testing.T) {
 		{"paste end marker neutralised", "x\x1b[201~y", "x[201~y"},
 	}
 	for _, c := range cases {
-		if got := Sanitize(c.in); got != c.want {
+		if got := sanitize(c.in); got != c.want {
 			t.Errorf("%s: got %q want %q", c.name, got, c.want)
 		}
 	}

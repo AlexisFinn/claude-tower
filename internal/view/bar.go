@@ -30,7 +30,7 @@ func Bar(ss []registry.Session, now time.Time, maxWidth int) string {
 	if len(ss) == 0 {
 		return ""
 	}
-	sorted := SortByName(ss)
+	sorted := sortByName(ss)
 	items := make([]barItem, 0, len(sorted))
 	for _, s := range sorted {
 		items = append(items, sessionItem(s, now))

@@ -94,10 +94,9 @@ func (c *Core) restoreLaunch(paneID string, l *launch) {
 // updateLaunches settles the launches against a snapshot whose listing began
 // when launchSeq was seq: a launch whose pane is listed without being pending
 // hosts a registered session and is done, and one whose pane is gone has
-// failed. A launch recorded after the
-// listing began may not be in it yet, and waits for the next snapshot. Nothing
-// is settled while the private server fails without being gone. The caller
-// holds c.mu.
+// failed. A launch recorded after the listing began may not be in it yet, and
+// waits for the next snapshot. Nothing is settled while the private server
+// fails without being gone. The caller holds c.mu.
 func (c *Core) updateLaunches(snap snapshot, seq uint64) {
 	if !snap.privateOK && !snap.privateGone {
 		return
@@ -110,7 +109,7 @@ func (c *Core) updateLaunches(snap snapshot, seq uint64) {
 		switch {
 		case pending[id]:
 		case l.seq > seq:
-		case snap.privateIDs[id]:
+		case hasPane(snap.listedPrivate, id):
 			delete(c.launches, id)
 		default:
 			c.failures = append(c.failures, StartFailure{Name: l.name, Cwd: l.cwd, Lines: l.lines})

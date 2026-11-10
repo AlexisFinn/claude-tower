@@ -50,7 +50,7 @@ type window struct {
 	// requests counts the close requests sent to the frontend, and acked the
 	// last one it answered.
 	requests, acked atomic.Uint64
-	ackWait         time.Duration
+	after           func(d time.Duration, f func())
 	emit            func(ctx context.Context, name string)
 	quit            func(ctx context.Context)
 }
@@ -63,10 +63,10 @@ const closeAckWait = 2 * time.Second
 
 func newWindow() *window {
 	return &window{
-		ready:   make(chan struct{}),
-		ackWait: closeAckWait,
-		emit:    func(ctx context.Context, name string) { runtime.EventsEmit(ctx, name) },
-		quit:    runtime.Quit,
+		ready: make(chan struct{}),
+		after: func(d time.Duration, f func()) { time.AfterFunc(d, f) },
+		emit:  func(ctx context.Context, name string) { runtime.EventsEmit(ctx, name) },
+		quit:  runtime.Quit,
 	}
 }
 
@@ -81,7 +81,14 @@ func (w *window) context() (context.Context, error) {
 	select {
 	case <-w.ready:
 		return w.ctx, nil
-	case <-time.After(windowWait):
+	default:
+	}
+	timer := time.NewTimer(windowWait)
+	defer timer.Stop()
+	select {
+	case <-w.ready:
+		return w.ctx, nil
+	case <-timer.C:
 		return nil, errors.New("démarrage trop long")
 	}
 }
@@ -121,15 +128,15 @@ func (w *window) Quit() {
 
 // beforeClose keeps the window open and asks the frontend for a confirmation,
 // unless the frontend cannot show one or the user already confirmed. A
-// frontend that does not answer within ackWait, because it reloads or broke,
-// lets the window close.
+// frontend that does not answer within closeAckWait, because it reloads or
+// broke, lets the window close.
 func (w *window) beforeClose(ctx context.Context) bool {
 	if w.quitting.Load() || !w.guarded.Load() {
 		return false
 	}
 	n := w.requests.Add(1)
 	w.emit(ctx, "quit-requested")
-	time.AfterFunc(w.ackWait, func() {
+	w.after(closeAckWait, func() {
 		if w.acked.Load() < n {
 			w.Quit()
 		}

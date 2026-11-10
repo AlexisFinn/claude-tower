@@ -34,7 +34,19 @@ type fakeTmux struct {
 	shells  int               // number of runs of the login shell
 	failing map[string]bool
 	others  [][]string // calls of programs other than tmux and the login shell
+	unknown [][]string // tmux commands the fake does not know
 }
+
+// subcommand returns the tmux command of an argument list, after the options
+// that precede it.
+func subcommand(cmd []string) string {
+	if cmd[0] == "-f" {
+		return cmd[2]
+	}
+	return cmd[0]
+}
+
+func isNewSession(cmd []string) bool { return subcommand(cmd) == "new-session" }
 
 func (f *fakeTmux) run(_ context.Context, stdin io.Reader, _ string, args ...string) ([]byte, error) {
 	if len(args) == 1 && args[0] == "-V" {
@@ -65,12 +77,12 @@ func (f *fakeTmux) run(_ context.Context, stdin io.Reader, _ string, args ...str
 	if f.failing[sock] {
 		return nil, fmt.Errorf("no server running on %s", sock)
 	}
-	switch cmd[0] {
+	switch subcommand(cmd) {
 	case "list-panes":
 		return []byte(f.panes[sock]), nil
 	case "list-clients":
 		return []byte(f.clients[sock]), nil
-	case "-f":
+	case "new-session":
 		return []byte("$3\t%5\n"), nil
 	case "list-sessions":
 		return []byte(f.listing[sock]), nil
@@ -81,8 +93,42 @@ func (f *fakeTmux) run(_ context.Context, stdin io.Reader, _ string, args ...str
 			size = "80\t24"
 		}
 		return []byte(f.capture[pane] + size + "\n"), nil
+	case "kill-session", "load-buffer", "paste-buffer", "switch-client", "resize-window", "source-file", "if-shell", "send-keys":
+		return nil, nil
 	}
-	return nil, nil
+	f.mu.Lock()
+	f.unknown = append(f.unknown, cmd)
+	f.mu.Unlock()
+	return nil, fmt.Errorf("tmux command not handled by the fake: %v", cmd)
+}
+
+// newSessions returns the new-session commands recorded for one socket.
+func (f *fakeTmux) newSessions(sock string) [][]string {
+	var out [][]string
+	for _, c := range f.commands(sock) {
+		if isNewSession(c) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// lastNewSession returns the last new-session command recorded for one
+// socket, nil when there is none.
+func (f *fakeTmux) lastNewSession(sock string) []string {
+	if all := f.newSessions(sock); len(all) > 0 {
+		return all[len(all)-1]
+	}
+	return nil
+}
+
+// commandNames returns the tmux commands recorded for one socket, in order.
+func (f *fakeTmux) commandNames(sock string) []string {
+	var out []string
+	for _, c := range f.commands(sock) {
+		out = append(out, subcommand(c))
+	}
+	return out
 }
 
 // commands returns the recorded commands of one socket.
@@ -103,7 +149,7 @@ func (f *fakeTmux) stdinOf(command string) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for i, c := range f.calls {
-		if c[1] == command {
+		if subcommand(c[1:]) == command {
 			return f.stdin[i]
 		}
 	}
@@ -112,7 +158,7 @@ func (f *fakeTmux) stdinOf(command string) string {
 
 func (f *fakeTmux) has(sock, command string) bool {
 	for _, c := range f.commands(sock) {
-		if c[0] == command {
+		if subcommand(c) == command {
 			return true
 		}
 	}
@@ -169,6 +215,13 @@ func newEnv(t *testing.T) *env {
 		alive:    map[int]bool{},
 		supports: true,
 	}
+	t.Cleanup(func() {
+		e.fake.mu.Lock()
+		defer e.fake.mu.Unlock()
+		if len(e.fake.unknown) > 0 {
+			t.Errorf("tmux commands not handled by the fake: %v", e.fake.unknown)
+		}
+	})
 	listenUnix(t, e.userSock)
 	listenUnix(t, e.privSock)
 	e.hosting = &hosting.Hosting{
@@ -235,7 +288,7 @@ func paneLine(id string, pid int, sessionID, name, window string, group string) 
 
 // paneLineAt is paneLine for a session created at the given time.
 func paneLineAt(id string, pid int, sessionID, name, window, group string, created time.Time) string {
-	return fmt.Sprintf("%s\t%d\t%s\t%s\t%s\t1\t%s\t80\t24\t%d\t/home/u/%s\n", id, pid, sessionID, name, window, group, created.Unix(), name)
+	return fmt.Sprintf("%s\t%d\t%s\t%s\t%s\t1\t%s\t%d\t/home/u/%s\n", id, pid, sessionID, name, window, group, created.Unix(), name)
 }
 
 func clientLine(name string, pid int, sessionID, sessionName, group string, activity int64) string {

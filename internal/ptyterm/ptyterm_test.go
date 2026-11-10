@@ -9,7 +9,6 @@ import (
 	"strings"
 	"syscall"
 	"testing"
-	"time"
 
 	"claude-tower/internal/tmux"
 
@@ -29,7 +28,10 @@ func TestNothingEmittedBeforeReady(t *testing.T) {
 	srv := testServer(t)
 	m, rec := newManager(t, srv, os.Environ())
 	id, sid := open(t, m, 1)
-	time.Sleep(400 * time.Millisecond)
+	waitFor(t, "output held", func() bool {
+		held, _ := heldOutput(m, id)
+		return held > 0
+	})
 	if ev := rec.snapshot(); len(ev) != 0 {
 		t.Fatalf("events before Ready: %d", len(ev))
 	}
@@ -149,10 +151,16 @@ func TestExitBeforeReadyIsEmittedAfterBufferedOutput(t *testing.T) {
 	srv := testServer(t)
 	m, rec := newManager(t, srv, os.Environ())
 	id, sid := open(t, m, 1)
-	time.Sleep(400 * time.Millisecond)
+	waitFor(t, "output held", func() bool {
+		held, _ := heldOutput(m, id)
+		return held > 0
+	})
 	killClient(t, srv)
 	waitFor(t, "view destroyed", func() bool { return len(viewSessions(srv)) == 0 })
-	time.Sleep(100 * time.Millisecond)
+	waitFor(t, "exit held", func() bool {
+		_, eof := heldOutput(m, id)
+		return eof
+	})
 	if ev := rec.snapshot(); len(ev) != 0 {
 		t.Fatalf("events before Ready: %d", len(ev))
 	}

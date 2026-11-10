@@ -43,21 +43,13 @@ func (h *Hosting) UserSocketDir(uid int) string {
 }
 
 // ConfigPath returns the path of config.json.
-func (h *Hosting) ConfigPath() (string, error) {
-	dir, err := h.configDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, configFile), nil
+func (h *Hosting) ConfigPath() string {
+	return filepath.Join(h.ConfigDir, configFile)
 }
 
 // LoadConfig reads config.json. A missing file yields the defaults.
 func (h *Hosting) LoadConfig() (Config, error) {
-	path, err := h.ConfigPath()
-	if err != nil {
-		return Config{}, err
-	}
-	return readConfig(path)
+	return readConfig(h.ConfigPath())
 }
 
 func readConfig(path string) (Config, error) {
@@ -115,10 +107,7 @@ func (h *Hosting) EnsureConfig(ctx context.Context) error {
 // writeTmuxConf returns the path of tmux.conf, written if it differs from the
 // expected content.
 func (h *Hosting) writeTmuxConf(ctx context.Context) (string, error) {
-	dir, err := h.configDir()
-	if err != nil {
-		return "", err
-	}
+	dir := h.ConfigDir
 	if err := os.MkdirAll(dir, dirMode); err != nil {
 		return "", err
 	}

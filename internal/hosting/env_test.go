@@ -92,7 +92,7 @@ func TestLoginShellEnvMergesBelowCurrentEnv(t *testing.T) {
 	}}
 	h := newHosting(t, rec)
 	h.Env = []string{"PATH=/app/bin:/usr/bin::/other", "HOME=/h", "FOO=mine"}
-	got, err := h.LoginShellEnv(context.Background())
+	got, err := h.loginShellEnv(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestLoginShellEnvMergesBelowCurrentEnv(t *testing.T) {
 	if c.name != "/bin/fake-shell" || !reflect.DeepEqual(c.args, []string{"-ilc", "env -0"}) {
 		t.Errorf("call: %+v", c)
 	}
-	if _, err := h.LoginShellEnv(context.Background()); err != nil || len(rec.calls) != 1 {
+	if _, err := h.loginShellEnv(context.Background()); err != nil || len(rec.calls) != 1 {
 		t.Errorf("result not cached: calls=%d err=%v", len(rec.calls), err)
 	}
 }
@@ -114,13 +114,13 @@ func TestLoginShellEnvPathWhenOnlyOneSideHasIt(t *testing.T) {
 	rec := &recorder{reply: func(string, []string) ([]byte, error) { return []byte("PATH=/login/bin\x00"), nil }}
 	h := newHosting(t, rec)
 	h.Env = []string{"HOME=/h"}
-	if got, _ := h.LoginShellEnv(context.Background()); !contains(got, "PATH=/login/bin") {
+	if got, _ := h.loginShellEnv(context.Background()); !contains(got, "PATH=/login/bin") {
 		t.Errorf("shell PATH lost: %v", got)
 	}
 	rec = &recorder{reply: func(string, []string) ([]byte, error) { return []byte("A=1\x00"), nil }}
 	h = newHosting(t, rec)
 	h.Env = []string{"PATH=/app/bin"}
-	if got, _ := h.LoginShellEnv(context.Background()); !contains(got, "PATH=/app/bin") {
+	if got, _ := h.loginShellEnv(context.Background()); !contains(got, "PATH=/app/bin") {
 		t.Errorf("application PATH lost: %v", got)
 	}
 }
@@ -129,13 +129,13 @@ func TestLoginShellEnvAcceptsLingeringChild(t *testing.T) {
 	waitDelay := fmt.Errorf("sh: %w", exec.ErrWaitDelay)
 	rec := &recorder{reply: func(string, []string) ([]byte, error) { return []byte("A=1\x00"), waitDelay }}
 	h := newHosting(t, rec)
-	got, err := h.LoginShellEnv(context.Background())
+	got, err := h.loginShellEnv(context.Background())
 	if err != nil || !contains(got, "A=1") {
 		t.Errorf("got %v err=%v", got, err)
 	}
 	rec = &recorder{reply: func(string, []string) ([]byte, error) { return nil, waitDelay }}
 	h = newHosting(t, rec)
-	if _, err := h.LoginShellEnv(context.Background()); err == nil {
+	if _, err := h.loginShellEnv(context.Background()); err == nil {
 		t.Error("empty output accepted")
 	}
 }
@@ -149,11 +149,11 @@ func TestLoginShellEnvFailureIsNotCached(t *testing.T) {
 		return []byte("A=1\x00"), nil
 	}}
 	h := newHosting(t, rec)
-	if _, err := h.LoginShellEnv(context.Background()); err == nil {
+	if _, err := h.loginShellEnv(context.Background()); err == nil {
 		t.Fatal("failure hidden")
 	}
 	fail = false
-	if got, err := h.LoginShellEnv(context.Background()); err != nil || !contains(got, "A=1") {
+	if got, err := h.loginShellEnv(context.Background()); err != nil || !contains(got, "A=1") {
 		t.Errorf("got %v err=%v", got, err)
 	}
 }
@@ -166,7 +166,7 @@ func TestLoginShellEnvWithInjectedShellScript(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := &Hosting{Shell: script, Env: []string{"Y=mine"}}
-	got, err := h.LoginShellEnv(context.Background())
+	got, err := h.loginShellEnv(context.Background())
 	if err != nil || !contains(got, "X=1") || !contains(got, "Y=mine") || contains(got, "Y=2") {
 		t.Errorf("got %v err=%v", got, err)
 	}

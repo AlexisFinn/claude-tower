@@ -135,7 +135,7 @@ func TestSortByName(t *testing.T) {
 		{Name: "beta", PID: 1, StartedAt: t0},
 	}
 	before := names(in)
-	got := names(SortByName(in))
+	got := names(sortByName(in))
 	if got != "alpha/4 beta/1 beta/3 Beta/2" {
 		t.Errorf("got %s", got)
 	}
