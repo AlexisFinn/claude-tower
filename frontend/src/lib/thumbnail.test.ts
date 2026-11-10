@@ -30,6 +30,32 @@ function fakeContext(calls: Call[]): CanvasRenderingContext2D {
   }) as unknown as CanvasRenderingContext2D
 }
 
+interface Put {
+  width: number
+  height: number
+  y: number
+}
+
+function image(width: number, height: number): ImageData {
+  return { width, height, data: new Uint8ClampedArray(width * height * 4) } as unknown as ImageData
+}
+
+/** The canvas a thumbnail paints its rows into, three times wider: its calls are recorded. */
+function scratchContext(calls: Call[]): CanvasRenderingContext2D {
+  const ctx = fakeContext(calls) as unknown as Record<string, unknown>
+  ctx.canvas = { width: 0, height: 0 }
+  ctx.getImageData = (_x: number, _y: number, w: number, h: number) => image(w, h)
+  return ctx as unknown as CanvasRenderingContext2D
+}
+
+/** The displayed canvas, which only receives folded rows. */
+function displayContext(puts: Put[]): CanvasRenderingContext2D {
+  const ctx = fakeContext([]) as unknown as Record<string, unknown>
+  ctx.createImageData = image
+  ctx.putImageData = (img: ImageData, _x: number, y: number) => puts.push({ width: img.width, height: img.height, y })
+  return ctx as unknown as CanvasRenderingContext2D
+}
+
 class FakeCanvas {
   width = 0
   height = 0
@@ -44,14 +70,17 @@ const ratio = { width: 0.6, height: 1.2 }
 const original = globalThis.document
 
 let calls: Call[]
+let puts: Put[]
+let scratch: CanvasRenderingContext2D
 let canvas: FakeCanvas
 let term: Terminal
 
 beforeEach(() => {
   calls = []
-  const ctx = fakeContext([])
-  ;(globalThis as { document?: unknown }).document = { createElement: () => ({ getContext: () => ctx }) }
-  canvas = new FakeCanvas(fakeContext(calls))
+  puts = []
+  scratch = scratchContext(calls)
+  ;(globalThis as { document?: unknown }).document = { createElement: () => ({ getContext: () => scratch }) }
+  canvas = new FakeCanvas(displayContext(puts))
   term = new Terminal({ cols: 20, rows: 5, scrollback: 0, allowProposedApi: true })
 })
 
@@ -65,9 +94,10 @@ function show(lines: string[], rows: number): Promise<void> {
   return new Promise((resolve) => term.write(screenSequence(lines, rows), resolve))
 }
 
-function draw(thumbnail: ReturnType<typeof createThumbnail>, g: BodyGeometry, dpr = 1, subpixel = false): void {
+function draw(thumbnail: ReturnType<typeof createThumbnail>, g: BodyGeometry, dpr = 1): void {
   calls.length = 0
-  thumbnail.draw(term.buffer.active, g, dpr, subpixel)
+  puts.length = 0
+  thumbnail.draw(term.buffer.active, g, dpr)
 }
 
 function paintedRows(): number[] {
@@ -92,8 +122,8 @@ describe('createThumbnail', () => {
     expect(calls.some((c) => c.name === 'fillText')).toBe(true)
     expect(canvas.width).toBeGreaterThan(0)
     expect(canvas.height).toBeGreaterThan(0)
-    expect(canvas.style.width).toBe(`${g.cols * g.cellWidth}px`)
-    expect(canvas.style.height).toBe(`${g.rows * g.cellHeight}px`)
+    expect(canvas.style.width).toBe(`${canvas.width}px`)
+    expect(canvas.style.height).toBe(`${canvas.height}px`)
   })
 
   it('clips every row to its own band', async () => {
@@ -112,6 +142,7 @@ describe('createThumbnail', () => {
     draw(thumbnail, geometry())
     draw(thumbnail, geometry())
     expect(calls).toEqual([])
+    expect(puts).toEqual([])
   })
 
   it('repaints only the row that changed', async () => {
@@ -164,87 +195,32 @@ describe('createThumbnail', () => {
     expect(paintedRows()).toHaveLength(3)
   })
 
-  it('outlines the text glyphs in their color, but neither the box drawing nor the wide glyphs', async () => {
-    await show(['\x1b[38;2;32;32;32mab\x1b[0m┌─世'], 1)
-    const strokes: { ch: unknown; color: unknown; width: unknown }[] = []
-    const ctx = fakeContext(calls)
-    const record = new Proxy(ctx, {
-      get(t, key: string) {
-        if (key === 'strokeText') return (ch: unknown) => strokes.push({ ch, color: t.strokeStyle, width: t.lineWidth })
-        return (t as unknown as Record<string, unknown>)[key]
-      },
-      set(t, key: string, value) {
-        ;(t as unknown as Record<string, unknown>)[key] = value
-        return true
-      },
-    })
-    const g = geometry(1)
-    draw(createThumbnail(new FakeCanvas(record) as unknown as HTMLCanvasElement), g)
-    expect(strokes.map((s) => s.ch)).toEqual(['a', 'b'])
-    expect(strokes.every((s) => s.color === '#585858' && typeof s.width === 'number' && s.width > 0)).toBe(true)
+  it('sets the text color again after a box drawing glyph', async () => {
+    await show(['\x1b[38;2;32;32;32ma┌b\x1b[0m'], 1)
+    draw(createThumbnail(canvas as unknown as HTMLCanvasElement), geometry(1))
     expect(calls.filter((c) => c.name === 'fillText').map((c) => [c.args[0], c.fillStyle])).toEqual([
-      ['a', '#585858'],
-      ['b', '#585858'],
-      ['世', '#e7ecf3'],
+      ['a', '#202020'],
+      ['b', '#202020'],
     ])
   })
 
-  it('sets the text color and outline again after a box drawing glyph', async () => {
-    await show(['\x1b[38;2;32;32;32ma┌b\x1b[0m'], 1)
-    const strokes: { ch: unknown; color: unknown; width: unknown }[] = []
-    const ctx = fakeContext(calls)
-    const record = new Proxy(ctx, {
-      get(t, key: string) {
-        if (key === 'strokeText') return (ch: unknown) => strokes.push({ ch, color: t.strokeStyle, width: t.lineWidth })
-        return (t as unknown as Record<string, unknown>)[key]
-      },
-      set(t, key: string, value) {
-        ;(t as unknown as Record<string, unknown>)[key] = value
-        return true
-      },
-    })
-    draw(createThumbnail(new FakeCanvas(record) as unknown as HTMLCanvasElement), geometry(1))
-    expect(strokes.map((s) => s.ch)).toEqual(['a', 'b'])
-    expect(strokes[1]).toEqual({ ...strokes[0], ch: 'b' })
-    expect(strokes[1].color).toBe('#585858')
-    expect(calls.filter((c) => c.name === 'fillText').map((c) => c.fillStyle)).toEqual(['#585858', '#585858'])
-  })
-
-  it('underlines in the color the text is drawn in', async () => {
+  it('underlines in the text color', async () => {
     await show(['\x1b[4;38;2;32;32;32mab\x1b[0m'], 1)
     const g = geometry(1)
     draw(createThumbnail(canvas as unknown as HTMLCanvasElement), g)
     const underlines = calls.filter((c) => c.name === 'fillRect' && (c.args[3] as number) < g.cellHeight / 2)
     expect(underlines).toHaveLength(2)
-    expect(underlines.every((c) => c.fillStyle === '#585858')).toBe(true)
+    expect(underlines.every((c) => c.fillStyle === '#202020')).toBe(true)
   })
-})
 
-describe('createThumbnail with subpixel rendering', () => {
-  it('draws at the display resolution and folds every row onto the canvas', async () => {
+  it('paints rows three times wider and folds each onto the displayed canvas', async () => {
     await show(['hello', 'world'], 2)
-    const puts: { width: number; height: number; y: unknown }[] = []
-    const image = (width: number, height: number) => ({ width, height, data: new Uint8ClampedArray(width * height * 4) })
-    const wideCalls: Call[] = []
-    const wideCtx = fakeContext(wideCalls)
-    const wideCanvas = { width: 0, height: 0 }
-    ;(wideCtx as unknown as Record<string, unknown>).canvas = wideCanvas
-    ;(wideCtx as unknown as Record<string, unknown>).getImageData = (_x: number, _y: number, w: number, h: number) => image(w, h)
-    ;(globalThis as { document?: unknown }).document = {
-      createElement: () => ({ getContext: () => wideCtx }),
-    }
-    const mainCtx = fakeContext(calls)
-    ;(mainCtx as unknown as Record<string, unknown>).createImageData = image
-    ;(mainCtx as unknown as Record<string, unknown>).putImageData = (img: { width: number; height: number }, _x: number, y: number) =>
-      puts.push({ width: img.width, height: img.height, y })
-    const target = new FakeCanvas(mainCtx)
     const g = geometry(2)
-    draw(createThumbnail(target as unknown as HTMLCanvasElement), g, 1, true)
-    expect(target.width).toBe(Math.round(g.cols * g.cellWidth))
-    expect(target.style.width).toBe(`${target.width}px`)
-    expect(puts).toHaveLength(2)
-    expect(puts.every((p) => p.width === target.width)).toBe(true)
-    expect(wideCanvas.width).toBe(3 * target.width)
-    expect(wideCalls.some((c) => c.name === 'setTransform' && c.args[0] === 3)).toBe(true)
+    draw(createThumbnail(canvas as unknown as HTMLCanvasElement), g)
+    expect(canvas.width).toBe(Math.round(g.cols * g.cellWidth))
+    expect(puts.map((p) => p.width)).toEqual([canvas.width, canvas.width])
+    expect(puts.map((p) => p.y)).toEqual([0, puts[0].height])
+    expect(scratch.canvas.width).toBe(3 * canvas.width)
+    expect(calls.some((c) => c.name === 'setTransform' && c.args[0] === 3)).toBe(true)
   })
 })

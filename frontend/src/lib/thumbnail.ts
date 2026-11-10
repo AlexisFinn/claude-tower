@@ -4,15 +4,12 @@ import { glyphShapes, isBoxGlyph, type Shape } from './boxDrawing'
 import { changedRows } from './rowDiff'
 import { readRow, type BufferLike, type DrawCell, type Row } from './screenCells'
 import { DEFAULT_BG } from './termPalette'
-import { outlines, strokeWidth, textColor, type Ink } from './thumbnailInk'
 import { foldSubpixels, SUBPIXELS } from './subpixel'
-import { canvasScale, cellBounds } from './thumbnailLayout'
+import { cellBounds } from './thumbnailLayout'
 
-/** Ink of the thumbnails when none is given. */
-export const DEFAULT_INK: Ink = { lift: 0.25, stroke: 0.045 }
-
-/** Font stack of the thumbnails. */
-export const THUMBNAIL_FONT_FAMILY = 'ui-monospace, "SFMono-Regular", Menlo, "DejaVu Sans Mono", "Liberation Mono", monospace'
+/** Font stack of the thumbnails: a monospace font that stays legible at small sizes first. */
+export const THUMBNAIL_FONT_FAMILY =
+  '"JetBrainsMono Nerd Font Mono", "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, "DejaVu Sans Mono", "Liberation Mono", monospace'
 
 const FALLBACK_ASCENT = 0.93
 const FALLBACK_DESCENT = 0.24
@@ -69,7 +66,6 @@ function paintShapes(ctx: CanvasRenderingContext2D, shapes: Shape[], x: number, 
 
 /** The pixel geometry of a canvas, in backing pixels. */
 interface Pixels {
-  ink: Ink
   width: number
   cellWidth: number
   cellHeight: number
@@ -97,43 +93,29 @@ function paintRow(ctx: CanvasRenderingContext2D, row: Row, y: number, px: Pixels
   const { ascent, descent } = px.metrics
   const baseline = y0 + Math.round((height - (ascent + descent) * px.font) / 2 + ascent * px.font)
   const underline = Math.max(1, Math.round(px.font / 14))
-  const stroke = strokeWidth(px.font, px.ink.stroke)
-  ctx.lineJoin = 'round'
   let font = ''
   let fill = ''
-  let outline = ''
   for (const c of row.cells) {
     const x0 = cellBounds(c.col, px.cellWidth)[0]
     const code = c.ch === '' ? 0 : (c.ch.codePointAt(0) ?? 0)
-    const color = textColor(c.fg, c.bg, px.ink.lift)
     if (c.ch !== '' && c.ch.length === 1 && isBoxGlyph(code)) {
-      // Box drawing keeps its own color: frames are drawn as solid shapes, which stay visible.
       paintShapes(ctx, glyphShapes(code, right(c) - x0, height), x0, y0, c.fg)
       fill = ''
-      outline = ''
     } else if (c.ch !== '') {
       const next = `${c.italic ? 'italic ' : ''}${c.bold ? 'bold ' : ''}${px.font}px ${px.family}`
       if (next !== font) {
         ctx.font = next
         font = next
       }
-      if (color !== fill) {
-        ctx.fillStyle = color
-        fill = color
+      if (c.fg !== fill) {
+        ctx.fillStyle = c.fg
+        fill = c.fg
       }
       ctx.fillText(c.ch, x0, baseline)
-      if (stroke > 0 && outlines(c.ch, c.wide)) {
-        if (color !== outline) {
-          ctx.strokeStyle = color
-          ctx.lineWidth = stroke
-          outline = color
-        }
-        ctx.strokeText(c.ch, x0, baseline)
-      }
     }
     if (c.underline) {
-      ctx.fillStyle = color
-      fill = color
+      ctx.fillStyle = c.fg
+      fill = c.fg
       ctx.fillRect(x0, Math.min(y1 - underline, baseline + underline), right(c) - x0, underline)
     }
   }
@@ -153,14 +135,13 @@ function snapToDevicePixels(canvas: HTMLCanvasElement, dpr: number): void {
 /** Draws a terminal buffer into a canvas, redrawing only the rows that changed. */
 export interface Thumbnail {
   /**
-   * Draws the first rows of the buffer for a geometry. The canvas is displayed
-   * at the geometry size and its backing store is oversampled, so the browser
-   * downscales an image. With subpixel rendering, the backing store has the
-   * display resolution instead, and the canvas is shifted onto whole device
-   * pixels, which the color stripes need. Everything is redrawn when the
-   * geometry, the font, the device pixel ratio or the rendering changed.
+   * Draws the first rows of the buffer for a geometry, with subpixel
+   * rendering: the backing store has the display resolution and the canvas is
+   * shifted onto whole device pixels, which the color stripes need.
+   * Everything is redrawn when the geometry, the font or the device pixel
+   * ratio changed.
    */
-  draw(buffer: BufferLike, geometry: BodyGeometry, dpr: number, subpixel?: boolean, ink?: Ink): void
+  draw(buffer: BufferLike, geometry: BodyGeometry, dpr: number): void
 }
 
 /** Creates a thumbnail that draws into a canvas with a font family. */
@@ -197,10 +178,9 @@ export function createThumbnail(canvas: HTMLCanvasElement, family: string = THUM
   }
 
   return {
-    draw(buffer, g, dpr, subpixel = false, ink = DEFAULT_INK) {
+    draw(buffer, g, dpr) {
       if (!ctx) return
-      const display = Math.max(1, Number.isFinite(dpr) ? dpr : 1)
-      const scale = subpixel ? display : canvasScale(dpr, g.cols * g.cellWidth, g.rows * g.cellHeight)
+      const scale = Math.max(1, Number.isFinite(dpr) ? dpr : 1)
       const px: Pixels = {
         width: Math.max(1, Math.round(g.cols * g.cellWidth * scale)),
         cellWidth: g.cellWidth * scale,
@@ -208,32 +188,27 @@ export function createThumbnail(canvas: HTMLCanvasElement, family: string = THUM
         font: g.font * scale,
         family,
         metrics,
-        ink,
       }
       const height = Math.max(1, Math.round(g.rows * px.cellHeight))
-      const key = `${px.width}x${height}|${g.cols}x${g.rows}|${px.font}|${subpixel}|${ink.lift}|${ink.stroke}`
+      const key = `${px.width}x${height}|${g.cols}x${g.rows}|${px.font}`
       if (key !== layoutKey) {
         layoutKey = key
         canvas.width = px.width
         canvas.height = height
-        // With subpixel rendering, each backing pixel is displayed on exactly one
-        // device pixel, so the browser never resamples the color stripes.
-        canvas.style.width = subpixel ? `${px.width / display}px` : `${g.cols * g.cellWidth}px`
-        canvas.style.height = subpixel ? `${height / display}px` : `${g.rows * g.cellHeight}px`
+        // Each backing pixel is displayed on exactly one device pixel, so the
+        // browser never resamples the color stripes.
+        canvas.style.width = `${px.width / scale}px`
+        canvas.style.height = `${height / scale}px`
         signatures = []
       }
-      if (subpixel) snapToDevicePixels(canvas, display)
-      else canvas.style.transform = ''
+      snapToDevicePixels(canvas, scale)
       cell ??= buffer.getNullCell()
       ctx.textBaseline = 'alphabetic'
       ctx.textAlign = 'left'
       const rows: Row[] = []
       for (let y = 0; y < g.rows; y++) rows.push(readRow(buffer.getLine(y), g.cols, cell))
       const next = rows.map((r) => r.signature)
-      for (const y of changedRows(signatures, next)) {
-        if (subpixel) paintSubpixelRow(rows[y], y, px)
-        else paintRow(ctx, rows[y], y, px)
-      }
+      for (const y of changedRows(signatures, next)) paintSubpixelRow(rows[y], y, px)
       signatures = next
     },
   }
