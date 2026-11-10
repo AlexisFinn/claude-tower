@@ -1,3 +1,5 @@
+import { realTimers, type Timers } from './timers'
+
 /** The kind of a notification. */
 export type ToastKind = 'info' | 'warning' | 'error'
 
@@ -18,17 +20,6 @@ export const TOAST_DURATION_MS: Record<ToastKind, number> = {
 /** The most notifications shown at once; the oldest ones are dropped first. */
 export const MAX_TOASTS = 4
 
-/** The timer functions the queue relies on. */
-export interface Timers {
-  set: (fn: () => void, ms: number) => unknown
-  clear: (handle: unknown) => void
-}
-
-const defaultTimers: Timers = {
-  set: (fn, ms) => setTimeout(fn, ms),
-  clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
-}
-
 /** A queue of notifications that expire on their own. */
 export interface ToastQueue {
   /** Shows a notification. The same text of the same kind is not duplicated: its expiry restarts. */
@@ -39,7 +30,7 @@ export interface ToastQueue {
 }
 
 /** Creates a queue that reports the current list of notifications on every change. */
-export function createToasts(onChange: (toasts: Toast[]) => void, timers: Timers = defaultTimers): ToastQueue {
+export function createToasts(onChange: (toasts: Toast[]) => void, timers: Timers = realTimers): ToastQueue {
   let toasts: Toast[] = []
   let nextId = 1
   const expiries = new Map<number, unknown>()

@@ -25,4 +25,21 @@ describe('SHORTCUT_GROUPS', () => {
       .map((c) => c[0])
     for (const letter of letters) expect(gridKeyAction(key(letter))).not.toBeNull()
   })
+
+  it('lists every key that the grid handles', () => {
+    const printable = Array.from({ length: 0x7f - 0x20 }, (_, i) => String.fromCharCode(0x20 + i))
+    const names: Record<string, string> = {
+      ArrowLeft: '←',
+      ArrowRight: '→',
+      ArrowUp: '↑',
+      ArrowDown: '↓',
+      Enter: 'Entrée',
+    }
+    const handled = [...printable, ...Object.keys(names)].filter((k) => gridKeyAction(key(k)) !== null)
+    expect(handled.length).toBeGreaterThan(0)
+    const listed = SHORTCUT_GROUPS.flatMap((g) => g.items.flatMap((i) => i.combos))
+      .filter((c) => c.length === 1)
+      .map((c) => c[0])
+    for (const k of handled) expect(listed, k).toContain(names[k] ?? k)
+  })
 })

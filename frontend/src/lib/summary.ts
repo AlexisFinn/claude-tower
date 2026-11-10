@@ -1,4 +1,4 @@
-import { stateName, type StateName } from './frame'
+import { STATE_NAMES, stateName, type StateName } from './frame'
 
 /** The number of sessions in one state, with the word that follows the number. */
 export interface StateCount {
@@ -6,8 +6,6 @@ export interface StateCount {
   count: number
   label: string
 }
-
-const ORDER: StateName[] = ['waiting', 'busy', 'background', 'idle', 'unknown']
 
 const LABELS: Record<StateName, [one: string, many: string]> = {
   waiting: ['attend', 'attendent'],
@@ -24,7 +22,7 @@ export function summarizeStates(cards: { State: string }[]): StateCount[] {
     const name = stateName(card.State)
     counts.set(name, (counts.get(name) ?? 0) + 1)
   }
-  return ORDER.filter((state) => counts.has(state)).map((state) => {
+  return STATE_NAMES.filter((state) => counts.has(state)).map((state) => {
     const count = counts.get(state) ?? 0
     return { state, count, label: LABELS[state][count === 1 ? 0 : 1] }
   })

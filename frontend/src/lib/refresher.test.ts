@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { createRefresher, type Timers } from './refresher'
+import { createRefresher } from './refresher'
+import type { Timers } from './timers'
 
 class FakeTimers implements Timers {
   next = 1

@@ -140,6 +140,17 @@ describe('createThumbnail', () => {
     expect(paintedRows()).toHaveLength(5)
   })
 
+  it('draws box glyphs with the cell size of the current geometry after it changes', async () => {
+    await show(lines, 5)
+    const rects = (): unknown[] => calls.filter((c) => c.name === 'fillRect').map((c) => c.args)
+    const thumbnail = createThumbnail(canvas as unknown as HTMLCanvasElement)
+    draw(thumbnail, geometry(5, 100))
+    draw(thumbnail, geometry(5, 200))
+    const changed = rects()
+    draw(createThumbnail(canvas as unknown as HTMLCanvasElement), geometry(5, 200))
+    expect(changed).toEqual(rects())
+  })
+
   it('repaints everything when the font changes without a geometry size change', async () => {
     await show(lines, 5)
     const thumbnail = createThumbnail(canvas as unknown as HTMLCanvasElement)

@@ -2,7 +2,6 @@ import type { Direction } from './navigation'
 
 /** The parts of a keyboard event the key maps read. */
 export interface KeyLike {
-  type?: string
   key: string
   ctrlKey: boolean
   shiftKey: boolean

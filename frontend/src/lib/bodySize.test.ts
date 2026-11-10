@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bodyGeometry, FIT_FONT, fitGrid, MAX_FIT, MIN_FIT, sameGeometry } from './bodySize'
+import { bodyGeometry, FIT_FONT, fitGrid, MAX_FIT, MIN_FIT, sameGeometry, sameSize } from './bodySize'
 
 const ratio = { width: 0.6, height: 1.2 }
 
@@ -100,5 +100,17 @@ describe('fitGrid', () => {
       const size = fitGrid(w, h, ratio)
       expect(bodyGeometry(size.cols, size.rows, w, h, ratio).rows).toBe(size.rows)
     }
+  })
+})
+
+describe('sameSize', () => {
+  it('compares the columns and the rows', () => {
+    expect(sameSize({ cols: 80, rows: 24 }, { cols: 80, rows: 24 })).toBe(true)
+    expect(sameSize({ cols: 80, rows: 24 }, { cols: 81, rows: 24 })).toBe(false)
+    expect(sameSize({ cols: 80, rows: 24 }, { cols: 80, rows: 25 })).toBe(false)
+  })
+
+  it('is false for an unknown size', () => {
+    expect(sameSize(undefined, { cols: 80, rows: 24 })).toBe(false)
   })
 })

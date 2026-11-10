@@ -1,8 +1,4 @@
-/** The timer functions of the refresher, replaceable in tests. */
-export interface Timers {
-  set(fn: () => void, ms: number): unknown
-  clear(handle: unknown): void
-}
+import { realTimers, type Timers } from './timers'
 
 /** Options of createRefresher. */
 export interface RefresherOptions {
@@ -18,11 +14,6 @@ export interface Refresher {
   stop(): void
   /** Runs a cycle now, unless one is already running. */
   kick(): void
-}
-
-const realTimers: Timers = {
-  set: (fn, ms) => setTimeout(fn, ms),
-  clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
 }
 
 /**
