@@ -1,127 +1,73 @@
 import { describe, expect, it } from 'vitest'
-import { bodySize, displayScale, fitBody, renderFont } from './bodySize'
+import { bodyGeometry, sameGeometry } from './bodySize'
 
-describe('bodySize', () => {
-  const cell = { width: 6.6, height: 13 }
+const ratio = { width: 0.6, height: 1.2 }
 
-  it('fits whole cells into the body', () => {
-    expect(bodySize(660, 130, cell)).toEqual({ cols: 100, rows: 10 })
-    expect(bodySize(666, 142, cell)).toEqual({ cols: 100, rows: 10 })
-    expect(bodySize(0.3 * 3, 0.1 * 3, { width: 0.3, height: 0.1 })).toEqual({ cols: 3, rows: 3 })
-  })
-
-  it('never returns less than one cell', () => {
-    expect(bodySize(2, 3, cell)).toEqual({ cols: 1, rows: 1 })
-    expect(bodySize(0, 0, cell)).toEqual({ cols: 1, rows: 1 })
-  })
-})
-
-describe('renderFont', () => {
-  const ratio = { width: 0.6, height: 1.2 }
-
-  it('renders at twice the displayed font', () => {
-    expect(renderFont(100, 600, ratio)).toBe(20) // displayed 10 px
-    expect(renderFont(100, 480, ratio)).toBe(16) // displayed 8 px
-  })
-
-  it('rounds to whole pixels', () => {
-    expect(renderFont(100, 500, ratio)).toBe(17)
-    expect(renderFont(100, 490, ratio)).toBe(16)
-  })
-
-  it('stays at the minimum for tiny text', () => {
-    expect(renderFont(212, 400, ratio)).toBe(10)
-    expect(renderFont(80, 1, ratio)).toBe(10)
-    expect(renderFont(80, 0, ratio)).toBe(10)
-  })
-
-  it('stays at the maximum when the display font is capped', () => {
-    expect(renderFont(40, 2000, ratio)).toBe(28)
-    expect(renderFont(80, 600, ratio)).toBe(25)
-  })
-
-  it('uses the default display font without a pane width', () => {
-    expect(renderFont(null, 1000, ratio)).toBe(22)
-    expect(renderFont(null, 10, ratio)).toBe(22)
-  })
-})
-
-describe('displayScale', () => {
-  it('makes the terminal as wide as the body', () => {
-    expect(displayScale(20, 500, 1000)).toBe(0.5)
-    expect(displayScale(20, 300, 1000)).toBe(0.3)
-  })
-
-  it('never enlarges the terminal', () => {
-    expect(displayScale(10, 2000, 1000)).toBe(1)
-  })
-
-  it('caps the displayed font at 16 px', () => {
-    expect(displayScale(28, 5000, 1000)).toBeCloseTo(16 / 28, 10)
-    expect(displayScale(20, 5000, 1000)).toBe(0.8)
-  })
-
-  it('shows the default 11 px font without a natural width', () => {
-    expect(displayScale(22, 800, null)).toBe(0.5)
-    expect(displayScale(22, 800, 0)).toBe(0.5)
-  })
-
-  it('never returns a negative scale', () => {
-    expect(displayScale(20, -5, 1000)).toBe(0)
-  })
-})
-
-describe('fitBody', () => {
-  const cell = { width: 12, height: 24 } // at 20 px
-
+describe('bodyGeometry', () => {
   it('fills the body width with the pane columns and takes the rows from the height', () => {
-    expect(fitBody(100, 600, 300, 20, cell, 1200)).toEqual({ scale: 0.5, cols: 100, rows: 25 })
+    const g = bodyGeometry(100, null, 600, 300, ratio)
+    expect(g.cols).toBe(100)
+    expect(g.font).toBeCloseTo(10, 10)
+    expect(g.cellWidth).toBeCloseTo(6, 10)
+    expect(g.cellHeight).toBeCloseTo(12, 10)
+    expect(g.rows).toBe(25)
   })
 
-  it('uses the measured natural width rather than the cell width', () => {
-    expect(fitBody(100, 600, 300, 20, cell, 1250)).toEqual({ scale: 0.48, cols: 100, rows: 26 })
+  it('stops at a 16 px font and leaves the right side empty', () => {
+    const g = bodyGeometry(40, null, 2000, 300, ratio)
+    expect(g.font).toBe(16)
+    expect(g.cols).toBe(40)
+    expect(g.cellWidth * g.cols).toBeLessThan(2000)
+    expect(g.rows).toBe(15)
   })
 
-  it('estimates the natural width from the cell when it could not be measured', () => {
-    expect(fitBody(100, 600, 300, 20, cell, null)).toEqual({ scale: 0.5, cols: 100, rows: 25 })
+  it('shows an 11 px font filling the width when the pane width is unknown', () => {
+    const g = bodyGeometry(null, null, 660, 130, ratio)
+    expect(g.font).toBe(11)
+    expect(g.cols).toBe(100)
+    expect(g.rows).toBe(9)
   })
 
-  it('stops at a 16 px displayed font and leaves the right side empty', () => {
-    expect(fitBody(40, 2000, 300, 28, { width: 16.8, height: 33.6 }, 672)).toEqual({
-      scale: 16 / 28,
-      cols: 40,
-      rows: 15,
-    })
-  })
-
-  it('fills the body at the default font when the pane width is unknown', () => {
-    expect(fitBody(null, 660, 130, 22, { width: 13.2, height: 26 }, null)).toEqual({
-      scale: 0.5,
-      cols: 100,
-      rows: 10,
-    })
-  })
-
-  it('ignores the natural width when the pane width is unknown', () => {
-    expect(fitBody(null, 660, 130, 22, { width: 13.2, height: 26 }, 5000).cols).toBe(100)
-  })
-
-  it('keeps the pane columns on a very small card', () => {
-    const fit = fitBody(212, 40, 20, 10, { width: 6, height: 12 }, 1272)
-    expect(fit.cols).toBe(212)
-    expect(fit.scale).toBeCloseTo(40 / 1272, 10)
-    expect(fit.rows).toBe(53)
-  })
-
-  it('never returns less than one row or one column', () => {
-    expect(fitBody(80, 528, 3, 20, cell, 960).rows).toBe(1)
-    expect(fitBody(null, 1, 3, 22, cell, null)).toMatchObject({ cols: 1, rows: 1 })
+  it('ignores the pane rows when they are not positive', () => {
+    expect(bodyGeometry(100, 0, 600, 300, ratio).rows).toBe(25)
   })
 
   it('caps the rows at the pane height', () => {
-    const cell = { width: 6, height: 12 }
-    expect(fitBody(212, 300, 1000, 10, cell, 1272, 50).rows).toBe(50)
-    expect(fitBody(212, 300, 100, 10, cell, 1272, 50).rows).toBeLessThan(50)
-    expect(fitBody(212, 300, 1000, 10, cell, 1272, null).rows).toBeGreaterThan(50)
+    expect(bodyGeometry(212, 50, 300, 1000, ratio).rows).toBe(50)
+    expect(bodyGeometry(212, 50, 300, 100, ratio).rows).toBeLessThan(50)
+    expect(bodyGeometry(212, null, 300, 1000, ratio).rows).toBeGreaterThan(50)
+  })
+
+  it('keeps the pane columns on a very small card', () => {
+    const g = bodyGeometry(212, null, 40, 20, ratio)
+    expect(g.cols).toBe(212)
+    expect(g.cellWidth * g.cols).toBeCloseTo(40, 10)
+  })
+
+  it('never returns less than one row or one column', () => {
+    expect(bodyGeometry(80, null, 528, 3, ratio).rows).toBe(1)
+    expect(bodyGeometry(null, null, 1, 3, ratio)).toMatchObject({ cols: 1, rows: 1 })
+    expect(bodyGeometry(null, null, 0, 0, ratio)).toMatchObject({ cols: 1, rows: 1 })
+  })
+
+  it('never returns a negative font for a negative width', () => {
+    expect(bodyGeometry(80, null, -5, 100, ratio).font).toBe(0)
+  })
+})
+
+describe('sameGeometry', () => {
+  it('compares every field', () => {
+    const g = bodyGeometry(100, 40, 600, 300, ratio)
+    expect(sameGeometry(g, { ...g })).toBe(true)
+    expect(sameGeometry(g, { ...g, rows: g.rows - 1 })).toBe(false)
+    expect(sameGeometry(g, { ...g, font: g.font + 1 })).toBe(false)
+    expect(sameGeometry(g, { ...g, cellHeight: g.cellHeight + 1 })).toBe(false)
+  })
+
+  it('handles null', () => {
+    const g = bodyGeometry(100, 40, 600, 300, ratio)
+    expect(sameGeometry(null, null)).toBe(true)
+    expect(sameGeometry(g, null)).toBe(false)
+    expect(sameGeometry(null, g)).toBe(false)
   })
 })

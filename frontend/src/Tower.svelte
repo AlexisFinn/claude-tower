@@ -23,6 +23,7 @@
   import { startFailureText } from './lib/startFailures'
   import { summarizeStates } from './lib/summary'
   import { createToasts, type Toast, type ToastKind } from './lib/toasts'
+  import { createTypingPause } from './lib/typingPause'
 
   let { warning }: { warning: string } = $props()
 
@@ -46,6 +47,8 @@
   const visible = new Set<number>()
   const failures = createFailureTracker()
   const notifier = createToasts((list) => (toasts = list))
+  // The thumbnails are not refreshed while the user types, so typing stays responsive.
+  const typing = createTypingPause({ onResume: () => refresher.kick() })
 
   const gridWidth = $derived(Math.max(0, areaWidth - 2 * GRID_PADDING))
   const gridHeight = $derived(Math.max(0, areaHeight - 2 * GRID_PADDING))
@@ -99,7 +102,7 @@
     for (const card of list) {
       const size = sizes.get(card.PID)
       if (!card.InTmux || !size || !visible.has(card.PID)) continue
-      if (fullscreen !== null || document.hidden) return
+      if (fullscreen !== null || document.hidden || typing.active()) return
       try {
         screens = { ...screens, [card.PID]: await Screen(card.PID, size.rows) }
         failures.succeed(card.PID)
@@ -148,6 +151,7 @@
     document.addEventListener('visibilitychange', onVisibility)
     return () => {
       refresher.stop()
+      typing.dispose()
       document.removeEventListener('visibilitychange', onVisibility)
       notifier.dispose()
     }
@@ -334,7 +338,11 @@
     bind:this={promptBar}
     card={selectedCard}
     dropBlocked={fullscreen !== null || helpOpen || confirmKill !== null}
-    onSent={() => refresher.kick()}
+    onSent={() => {
+      typing.end()
+      refresher.kick()
+    }}
+    onTyping={() => typing.touch()}
     onLocate={locateSelected}
   />
 

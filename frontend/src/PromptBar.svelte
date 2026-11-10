@@ -6,6 +6,7 @@
   import Icon from './Icon.svelte'
   import { addFiles, composeMessage, fileName, removeFile } from './lib/attachments'
   import { errorMessage } from './lib/errors'
+  import { INITIAL_HEIGHT_STATE, heightStateOf, needsHeightMeasure } from './lib/composerHeight'
   import { frameClass } from './lib/frame'
   import {
     beginSend,
@@ -22,7 +23,14 @@
     dropBlocked = false,
     onSent,
     onLocate,
-  }: { card: core.Card | null; dropBlocked?: boolean; onSent: () => void; onLocate: () => void } = $props()
+    onTyping,
+  }: {
+    card: core.Card | null
+    dropBlocked?: boolean
+    onSent: () => void
+    onLocate: () => void
+    onTyping: () => void
+  } = $props()
 
   const MAX_HEIGHT = 172
 
@@ -30,17 +38,29 @@
   let prompt = $state<PromptState>({ ...emptyPrompt })
   let input: HTMLTextAreaElement
   let dragTimer: ReturnType<typeof setTimeout> | undefined
+  let heightState = INITIAL_HEIGHT_STATE
 
   const availability = $derived(promptAvailability(card, prompt))
   const locked = $derived(availability.disabled && availability.reason !== '')
   const placeholder = $derived(card ? `Message pour ${card.Name}…` : 'Aucune session sélectionnée')
 
+  // The height is measured at most once per frame, and only when the text may have changed it.
   $effect(() => {
     void prompt.text
     if (!input) return
+    const frame = requestAnimationFrame(fitHeight)
+    return () => cancelAnimationFrame(frame)
+  })
+
+  function fitHeight(): void {
+    const text = prompt.text
+    const overflows = (): boolean => input.scrollHeight > input.clientHeight && input.clientHeight < MAX_HEIGHT
+    const measure = needsHeightMeasure(heightState, text, overflows)
+    heightState = heightStateOf(text)
+    if (!measure) return
     input.style.height = 'auto'
     input.style.height = `${Math.min(input.scrollHeight, MAX_HEIGHT)}px`
-  })
+  }
 
   /** Puts the cursor in the text area. */
   export function focus(): void {
@@ -175,6 +195,7 @@
       bind:this={input}
       bind:value={prompt.text}
       onkeydown={onKeydown}
+      oninput={onTyping}
       disabled={availability.disabled}
       hidden={locked}
       rows="1"

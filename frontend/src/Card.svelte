@@ -1,24 +1,25 @@
 <script module lang="ts">
-  import { FALLBACK_CELL_RATIO, type CellSize } from './lib/bodySize'
+  import { measureFont, THUMBNAIL_FONT_FAMILY } from './lib/thumbnail'
 
-  // The font is the same in every card, so the cell size per pixel of font is measured once.
-  let measuredRatio: CellSize = FALLBACK_CELL_RATIO
-  let ratioMeasured = false
+  // The font is the same in every card, so its cell size per pixel of font is measured once.
+  const cellRatio = measureFont(THUMBNAIL_FONT_FAMILY).cell
 </script>
 
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, untrack } from 'svelte'
   import { Terminal } from '@xterm/xterm'
   import { Unicode11Addon } from '@xterm/addon-unicode11'
   import type { core } from '../wailsjs/go/models'
   import Icon from './Icon.svelte'
   import StatePill from './StatePill.svelte'
   import { parseActivity } from './lib/activity'
-  import { fitBody, renderFont, type BodyFit, type GridSize } from './lib/bodySize'
+  import { bodyGeometry, sameGeometry, type BodyGeometry, type GridSize } from './lib/bodySize'
   import { backgroundLabel, type BackgroundTasks } from './lib/cardText'
+  import { watchDevicePixelRatio } from './lib/devicePixelRatio'
   import { frameClass } from './lib/frame'
   import type { Rect } from './lib/layout'
   import { screenSequence } from './lib/screenSequence'
+  import { createThumbnail, type Thumbnail } from './lib/thumbnail'
 
   interface Props {
     card: core.Card
@@ -50,17 +51,21 @@
     onVisible,
   }: Props = $props()
 
-  const FONT_FAMILY = 'ui-monospace, "SFMono-Regular", Menlo, "DejaVu Sans Mono", monospace'
-
   let root: HTMLDivElement
-  let host: HTMLDivElement | undefined = $state()
+  let canvas: HTMLCanvasElement | undefined = $state()
   let bodyWidth = $state(0)
   let bodyHeight = $state(0)
   let term = $state.raw<Terminal | null>(null)
-  let fit = $state.raw<BodyFit | null>(null)
-  let remeasure = $state(0)
-  let lastKey = ''
+  let thumbnail = $state.raw<Thumbnail | null>(null)
+  let geometry = $state.raw<BodyGeometry | null>(null)
+  let dpr = $state(window.devicePixelRatio || 1)
+  let lastContentKey = ''
+  let lastPaintKey = ''
+  let current: { geometry: BodyGeometry; dpr: number } | null = null
 
+  // The card object is replaced on every refresh: effects depend on these values instead.
+  const pid = $derived(card.PID)
+  const inTmux = $derived(card.InTmux)
   const activity = $derived(parseActivity(card.Activity))
   const activityIcon = $derived(
     activity.kind === 'tool' ? 'zap' : activity.kind === 'prompt' ? 'arrowRight' : 'message',
@@ -69,96 +74,75 @@
   const paneCols = $derived(screen && screen.Width > 0 ? screen.Width : null)
   const paneRows = $derived(screen && screen.Height > 0 ? screen.Height : null)
 
-  function screenElement(t: Terminal): HTMLElement | null {
-    return t.element?.querySelector<HTMLElement>('.xterm-screen') ?? null
-  }
-
-  /** Returns the size in pixels of the rendered grid, before the scale, or null when it is not laid out. */
-  function naturalSize(t: Terminal): CellSize | null {
-    const el = screenElement(t)
-    if (!el || el.clientWidth === 0 || el.clientHeight === 0) return null
-    return { width: el.clientWidth, height: el.clientHeight }
-  }
-
-  /** Renders the terminal at a comfortable font, then scales it down to fill the body width. */
-  function layout(t: Terminal, cols: number | null, rows: number | null, width: number, height: number): BodyFit {
-    const font = renderFont(cols, width, measuredRatio)
-    if (t.options.fontSize !== font) t.options.fontSize = font
-    const grid = naturalSize(t)
-    const cell = grid
-      ? { width: grid.width / t.cols, height: grid.height / t.rows }
-      : { width: measuredRatio.width * font, height: measuredRatio.height * font }
-    if (grid && !ratioMeasured) {
-      ratioMeasured = true
-      measuredRatio = { width: cell.width / font, height: cell.height / font }
-    }
-    let naturalWidth: number | null = null
-    if (cols !== null) {
-      t.resize(cols, t.rows)
-      naturalWidth = naturalSize(t)?.width ?? null
-    }
-    const next = fitBody(cols, width, height, font, cell, naturalWidth, rows)
-    t.resize(next.cols, next.rows)
-    return next
-  }
-
   $effect(() => {
-    if (!card.InTmux || !host) return
+    if (!inTmux || !canvas) return
     const t = new Terminal({
+      cols: 80,
+      rows: 24,
       disableStdin: true,
       scrollback: 0,
-      fontSize: 11,
-      fontFamily: FONT_FAMILY,
-      lineHeight: 1,
-      cursorInactiveStyle: 'none',
       allowProposedApi: true,
-      theme: { background: '#07090c', foreground: '#e7ecf3' },
     })
     t.loadAddon(new Unicode11Addon())
     t.unicode.activeVersion = '11'
-    t.open(host)
-    t.write('\x1b[?25l')
-    const screenEl = screenElement(t)
-    const observer = new ResizeObserver(() => remeasure++)
-    if (screenEl) observer.observe(screenEl)
-    lastKey = ''
+    lastContentKey = ''
+    lastPaintKey = ''
     term = t
+    thumbnail = createThumbnail(canvas)
     return () => {
-      observer.disconnect()
       term = null
-      fit = null
+      thumbnail = null
+      current = null
       t.dispose()
     }
   })
 
   onMount(() => {
     const observer = new IntersectionObserver((entries) => {
-      for (const entry of entries) onVisible(card.PID, entry.isIntersecting)
+      for (const entry of entries) onVisible(pid, entry.isIntersecting)
     })
     observer.observe(root)
+    const stopWatching = watchDevicePixelRatio((ratio) => (dpr = ratio))
     return () => {
       observer.disconnect()
-      onVisible(card.PID, false)
-      onMeasure(card.PID, null)
+      stopWatching()
+      onVisible(pid, false)
+      onMeasure(pid, null)
     }
   })
 
-  // The layout is idempotent: remeasure only fires again when the rendered size
-  // changes, which a second pass at the same font and grid does not do.
+  // The geometry only depends on the body and pane sizes, and the canvas is
+  // taken out of the flow, so drawing never changes the body size again.
   $effect(() => {
-    void remeasure
-    if (!term || bodyWidth <= 0 || bodyHeight <= 0) return
-    const next = layout(term, paneCols, paneRows, bodyWidth, bodyHeight)
-    fit = next
-    onMeasure(card.PID, { cols: next.cols, rows: next.rows })
+    if (!inTmux || bodyWidth <= 0 || bodyHeight <= 0) return
+    const next = bodyGeometry(paneCols, paneRows, bodyWidth, bodyHeight, cellRatio)
+    if (!sameGeometry(untrack(() => geometry), next)) geometry = next
+    onMeasure(pid, { cols: next.cols, rows: next.rows })
   })
 
+  /** Draws the buffer with the latest geometry; a write still pending finishes by calling it again. */
+  function paint(): void {
+    if (!term || !thumbnail || !current) return
+    thumbnail.draw(term.buffer.active, current.geometry, current.dpr)
+  }
+
   $effect(() => {
-    if (!term || !fit || !screen) return
-    const key = `${screen.Hash}|${fit.cols}x${fit.rows}`
-    if (key === lastKey) return
-    lastKey = key
-    term.write(screenSequence(screen.Lines, fit.rows))
+    const t = term
+    const g = geometry
+    const ratio = dpr
+    if (!t || !g || !thumbnail || !screen) return
+    const contentKey = `${screen.Hash}|${g.cols}x${g.rows}`
+    const paintKey = `${contentKey}|${g.font}|${ratio}`
+    if (paintKey === lastPaintKey) return
+    lastPaintKey = paintKey
+    current = { geometry: g, dpr: ratio }
+    if (contentKey === lastContentKey) {
+      paint()
+      return
+    }
+    lastContentKey = contentKey
+    t.resize(g.cols, g.rows)
+    t.write(screenSequence(screen.Lines, g.rows), paint)
   })
 
   $effect(() => {
@@ -226,12 +210,7 @@
   {#if card.InTmux}
     <div class="screen">
       <div class="fill" bind:clientWidth={bodyWidth} bind:clientHeight={bodyHeight}>
-        <div
-          class="term"
-          class:ready={fit !== null}
-          style:transform="scale({fit?.scale ?? 1})"
-          bind:this={host}
-        ></div>
+        <canvas bind:this={canvas} class:ready={geometry !== null}></canvas>
       </div>
       {#if unavailable}
         <div class="stale" role="status">
@@ -431,21 +410,19 @@
     overflow: hidden;
   }
 
-  /* The terminal keeps its natural layout size and is scaled down from the top left, so it is
-     taken out of the flow and clipped by .fill. */
-  .term {
+  /* The canvas is sized in CSS pixels by the thumbnail and taken out of the flow, so it is
+     clipped by .fill and never changes its size. */
+  canvas {
     position: absolute;
     top: 0;
     left: 0;
-    width: max-content;
+    display: block;
     pointer-events: none;
     user-select: none;
     visibility: hidden;
-    transform-origin: top left;
-    will-change: transform;
   }
 
-  .term.ready {
+  canvas.ready {
     visibility: visible;
   }
 
