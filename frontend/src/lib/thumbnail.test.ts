@@ -243,15 +243,33 @@ describe('createThumbnail', () => {
     ])
   })
 
+  it('draws one backing pixel per device pixel below a ratio of 1 too', async () => {
+    await show(['hello'], 1)
+    const g = geometry(1)
+    draw(createThumbnail(canvas as unknown as HTMLCanvasElement), g, 0.5)
+    expect(canvas.width).toBe(Math.round(g.cols * g.cellWidth * 0.5))
+    expect(canvas.style.width).toBe(`${canvas.width / 0.5}px`)
+  })
+
   it('shifts the canvas onto whole device pixels when it is drawn and when it moves', async () => {
     await show(['hello'], 1)
     canvas.left = 10.3
-    canvas.top = 4.75
+    canvas.top = 4.8
     const thumbnail = createThumbnail(canvas as unknown as HTMLCanvasElement)
     draw(thumbnail, geometry(1), 2)
-    const at = canvas.getBoundingClientRect()
-    expect(Number.isInteger(Math.round(at.left * 2 * 1000) / 1000)).toBe(true)
-    expect(Number.isInteger(Math.round(at.top * 2 * 1000) / 1000)).toBe(true)
+    // 10.3 CSS px is 20.6 device px, moved to 21; 4.8 is 9.6, moved to 10.
+    const [x, y] = /translate\(([-\d.e]+)px, ([-\d.e]+)px\)/.exec(canvas.style.transform)!.slice(1).map(Number)
+    expect(x).toBeCloseTo(0.2, 6)
+    expect(y).toBeCloseTo(0.2, 6)
+    const shifted = canvas.style.transform
+    thumbnail.align(2)
+    thumbnail.align(2)
+    expect(canvas.style.transform).toBe(shifted)
+    canvas.left = 3.1
+    canvas.top = 0
+    thumbnail.align(1.5)
+    // 3.1 CSS px is 4.65 device px, moved to 5.
+    expect(canvas.getBoundingClientRect().left * 1.5).toBeCloseTo(5, 6)
     canvas.left = 20
     canvas.top = 5
     thumbnail.align(2)

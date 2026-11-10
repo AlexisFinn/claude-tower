@@ -149,14 +149,30 @@
     if (selected) root.scrollIntoView({ block: 'nearest' })
   })
 
-  // A card that moves without redrawing realigns its canvas on device pixels once the layout is done.
+  const placement = $derived(`${rect.x}|${rect.y}|${rect.width}|${rect.height}`)
+  let alignFrame = 0
+
+  /** Realigns the canvas on device pixels once the layout is done, at most once per frame. */
+  function scheduleAlign(): void {
+    if (alignFrame !== 0) return
+    alignFrame = requestAnimationFrame(() => {
+      alignFrame = 0
+      thumbnail?.align(dpr)
+    })
+  }
+
+  // A card that moves or scrolls without redrawing realigns its canvas.
   $effect(() => {
-    const t = thumbnail
-    const ratio = dpr
-    void [rect.x, rect.y, rect.width, rect.height]
-    if (!t) return
-    const frame = requestAnimationFrame(() => t.align(ratio))
-    return () => cancelAnimationFrame(frame)
+    void placement
+    if (thumbnail) scheduleAlign()
+  })
+
+  onMount(() => {
+    window.addEventListener('scroll', scheduleAlign, { capture: true, passive: true })
+    return () => {
+      window.removeEventListener('scroll', scheduleAlign, { capture: true })
+      cancelAnimationFrame(alignFrame)
+    }
   })
 
   function act(e: MouseEvent, action: (pid: number) => void): void {
