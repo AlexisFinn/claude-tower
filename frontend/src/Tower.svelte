@@ -190,6 +190,7 @@
     // Closing the window asks here first while this view can show the confirmation.
     const stopQuitRequests = EventsOn('quit-requested', onQuitRequested)
     const unguard = (): void => void GuardQuit(false)
+    // A reload may not deliver this call; the close request then goes unanswered, and the window closes after the wait.
     window.addEventListener('beforeunload', unguard)
     void GuardQuit(true)
     return () => {
