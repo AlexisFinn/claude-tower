@@ -37,6 +37,9 @@ type Dialogs interface {
 	// ChooseDirectory returns the directory picked by the user, "" when the
 	// dialog is cancelled.
 	ChooseDirectory() (string, error)
+	// ChooseFiles returns the files picked by the user, empty when the dialog
+	// is cancelled.
+	ChooseFiles() ([]string, error)
 }
 
 // Engine is what App needs from core.Core.
@@ -265,6 +268,12 @@ func (a *App) NewSession() error {
 	ctx, cancel := callContext()
 	defer cancel()
 	return e.NewSession(ctx, dir)
+}
+
+// ChooseFiles asks for files to attach to a message and returns their absolute
+// paths. Cancelling the dialog returns no path and is not an error.
+func (a *App) ChooseFiles() ([]string, error) {
+	return a.dialogs.ChooseFiles()
 }
 
 // OpenTerminal shows a session in a new terminal of cols by rows cells and

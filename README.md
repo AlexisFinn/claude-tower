@@ -74,6 +74,7 @@ Dans ce terminal, la souris sert à défiler. Pour sélectionner du texte, maint
 | `Entrée` ou double-clic | aller à la session |
 | `o` | ouvrir la session en plein écran dans l'application |
 | `i` ou `/` | écrire dans le compositeur |
+| bouton `+` (compositeur) | joindre des fichiers (ou les glisser sur la fenêtre) |
 | `Entrée` (compositeur) | envoyer |
 | `Maj+Entrée` (compositeur) | nouvelle ligne |
 | `Échap` (compositeur) | revenir à la grille |

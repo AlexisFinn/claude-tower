@@ -81,6 +81,14 @@ func (w *window) ChooseDirectory() (string, error) {
 	return runtime.OpenDirectoryDialog(ctx, runtime.OpenDialogOptions{Title: "Dossier de la nouvelle session"})
 }
 
+func (w *window) ChooseFiles() ([]string, error) {
+	ctx, err := w.context()
+	if err != nil {
+		return nil, err
+	}
+	return runtime.OpenMultipleFilesDialog(ctx, runtime.OpenDialogOptions{Title: "Fichiers à joindre"})
+}
+
 func runApp() error {
 	w := newWindow()
 	a := app.New(w, w, os.Environ())
@@ -92,6 +100,7 @@ func runApp() error {
 		MinHeight:        560,
 		BackgroundColour: &options.RGBA{R: 11, G: 14, B: 19, A: 255},
 		AssetServer:      &assetserver.Options{Assets: assets},
+		DragAndDrop:      &options.DragAndDrop{EnableFileDrop: true},
 		Linux:            &linux.Options{Icon: icon, ProgramName: "claude-tower"},
 		Mac:              &mac.Options{About: &mac.AboutInfo{Title: "Claude Tower", Icon: icon}},
 		OnStartup: func(ctx context.Context) {

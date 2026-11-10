@@ -6,6 +6,10 @@ export function Cards() {
   return window['go']['app']['App']['Cards']();
 }
 
+export function ChooseFiles() {
+  return window['go']['app']['App']['ChooseFiles']();
+}
+
 export function CloseTerminal(arg1) {
   return window['go']['app']['App']['CloseTerminal'](arg1);
 }

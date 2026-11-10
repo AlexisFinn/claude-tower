@@ -4,6 +4,8 @@ import {core} from '../models';
 
 export function Cards():Promise<Array<core.Card>>;
 
+export function ChooseFiles():Promise<Array<string>>;
+
 export function CloseTerminal(arg1:number):Promise<void>;
 
 export function Focus(arg1:number):Promise<core.FocusResult>;

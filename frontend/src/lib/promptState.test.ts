@@ -18,6 +18,12 @@ describe('prompt state', () => {
     expect(canSend(beginSend(typed))).toBe(false)
   })
 
+  it('sends files without text', () => {
+    expect(canSend({ ...emptyPrompt, files: ['/a.txt'] })).toBe(true)
+    expect(canSend(beginSend({ ...emptyPrompt, files: ['/a.txt'] }))).toBe(false)
+    expect(canSend({ ...emptyPrompt, text: ' ', files: [] })).toBe(false)
+  })
+
   it('disables the bar while sending', () => {
     const sending = beginSend(typed)
     expect(sending.sending).toBe(true)
@@ -27,14 +33,20 @@ describe('prompt state', () => {
     })
   })
 
-  it('clears the text after a success', () => {
-    expect(sendSucceeded()).toEqual({ text: '', sending: false, error: '' })
+  it('clears the text and the files after a success', () => {
+    expect(sendSucceeded()).toEqual({ text: '', files: [], sending: false, error: '' })
   })
 
   it('keeps the text and shows the error after a failure', () => {
     const failed = sendFailed(beginSend(typed), 'session morte')
-    expect(failed).toEqual({ text: 'fais ceci', sending: false, error: 'session morte' })
+    expect(failed).toEqual({ text: 'fais ceci', files: [], sending: false, error: 'session morte' })
     expect(canSend(failed)).toBe(true)
+  })
+
+  it('keeps the files after a failure', () => {
+    const withFiles = { ...typed, files: ['/a.txt', '/b.txt'] }
+    expect(sendFailed(beginSend(withFiles), 'oups').files).toEqual(['/a.txt', '/b.txt'])
+    expect(sendSucceeded().files).toEqual([])
   })
 
   it('clears a previous error when a new send starts', () => {

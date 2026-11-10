@@ -1,8 +1,10 @@
 <script lang="ts">
-  import { tick } from 'svelte'
-  import { Prompt } from '../wailsjs/go/app/App'
+  import { onMount, tick } from 'svelte'
+  import { ChooseFiles, Prompt } from '../wailsjs/go/app/App'
+  import { OnFileDrop, OnFileDropOff } from '../wailsjs/runtime/runtime'
   import type { core } from '../wailsjs/go/models'
   import Icon from './Icon.svelte'
+  import { addFiles, composeMessage, fileName, removeFile } from './lib/attachments'
   import { errorMessage } from './lib/errors'
   import { frameClass } from './lib/frame'
   import {
@@ -23,15 +25,17 @@
 
   const MAX_HEIGHT = 172
 
-  let state = $state<PromptState>({ ...emptyPrompt })
+  let dragging = $state(false)
+  let prompt = $state<PromptState>({ ...emptyPrompt })
   let input: HTMLTextAreaElement
+  let dragTimer: ReturnType<typeof setTimeout> | undefined
 
-  const availability = $derived(promptAvailability(card, state))
+  const availability = $derived(promptAvailability(card, prompt))
   const locked = $derived(availability.disabled && availability.reason !== '')
   const placeholder = $derived(card ? `Message pour ${card.Name}…` : 'Aucune session sélectionnée')
 
   $effect(() => {
-    void state.text
+    void prompt.text
     if (!input) return
     input.style.height = 'auto'
     input.style.height = `${Math.min(input.scrollHeight, MAX_HEIGHT)}px`
@@ -42,16 +46,69 @@
     input?.focus()
   }
 
-  async function send(): Promise<void> {
-    if (!card || !canSend(state) || availability.disabled) return
-    const pid = card.PID
-    state = beginSend(state)
+  /** Adds files to the message, unless the bar cannot take a message. */
+  function attach(paths: readonly string[]): void {
+    if (availability.disabled || paths.length === 0) return
+    prompt = { ...prompt, files: addFiles(prompt.files, paths), error: '' }
+  }
+
+  async function chooseFiles(): Promise<void> {
+    if (availability.disabled) return
     try {
-      await Prompt(pid, state.text)
-      state = sendSucceeded()
+      attach((await ChooseFiles()) ?? [])
+    } catch (e) {
+      prompt = { ...prompt, error: errorMessage(e) }
+    }
+  }
+
+  function detach(path: string): void {
+    prompt = { ...prompt, files: removeFile(prompt.files, path) }
+  }
+
+  function carriesFiles(e: DragEvent): boolean {
+    return e.dataTransfer?.types.includes('Files') ?? false
+  }
+
+  function stopDragging(): void {
+    clearTimeout(dragTimer)
+    dragging = false
+  }
+
+  function onDragOver(e: DragEvent): void {
+    if (!carriesFiles(e) || availability.disabled) return
+    dragging = true
+    clearTimeout(dragTimer)
+    dragTimer = setTimeout(stopDragging, 400)
+  }
+
+  function onDragLeave(e: DragEvent): void {
+    if (e.relatedTarget === null) stopDragging()
+  }
+
+  onMount(() => {
+    OnFileDrop((_x, _y, paths) => attach(paths), false)
+    window.addEventListener('dragover', onDragOver)
+    window.addEventListener('dragleave', onDragLeave)
+    window.addEventListener('drop', stopDragging)
+    return () => {
+      OnFileDropOff()
+      window.removeEventListener('dragover', onDragOver)
+      window.removeEventListener('dragleave', onDragLeave)
+      window.removeEventListener('drop', stopDragging)
+      clearTimeout(dragTimer)
+    }
+  })
+
+  async function send(): Promise<void> {
+    if (!card || !canSend(prompt) || availability.disabled) return
+    const pid = card.PID
+    prompt = beginSend(prompt)
+    try {
+      await Prompt(pid, composeMessage(prompt.text, prompt.files))
+      prompt = sendSucceeded()
       onSent()
     } catch (e) {
-      state = sendFailed(state, errorMessage(e))
+      prompt = sendFailed(prompt, errorMessage(e))
     }
     await tick()
     input?.focus()
@@ -69,7 +126,26 @@
 </script>
 
 <div class="composer">
-  <div class="bar">
+  {#if prompt.files.length > 0}
+    <ul class="files" aria-label="Fichiers joints">
+      {#each prompt.files as path (path)}
+        <li class="chip" title={path}>
+          <Icon name="file" size={14} />
+          <span class="file-name">{fileName(path)}</span>
+          <button
+            class="remove"
+            aria-label="Retirer {fileName(path)}"
+            title="Retirer"
+            disabled={prompt.sending}
+            onclick={() => detach(path)}
+          >
+            <Icon name="x" size={12} />
+          </button>
+        </li>
+      {/each}
+    </ul>
+  {/if}
+  <div class="bar" class:dropping={dragging}>
     {#if card}
       <button class="target {frameClass(card.State, false)}" title="Afficher la carte de {card.Name}" onclick={onLocate}>
         <span class="dot"></span>
@@ -78,12 +154,21 @@
     {:else}
       <span class="target none">Aucune session</span>
     {/if}
+    <button
+      class="attach"
+      aria-label="Joindre des fichiers"
+      title="Joindre des fichiers"
+      disabled={availability.disabled}
+      onclick={() => void chooseFiles()}
+    >
+      <Icon name="plus" />
+    </button>
     {#if locked}
       <span class="reason" role="status"><Icon name="lock" /><span>{availability.reason}</span></span>
     {/if}
     <textarea
       bind:this={input}
-      bind:value={state.text}
+      bind:value={prompt.text}
       onkeydown={onKeydown}
       disabled={availability.disabled}
       hidden={locked}
@@ -93,18 +178,20 @@
     ></textarea>
     <button
       class="send"
-      class:sending={state.sending}
+      class:sending={prompt.sending}
       aria-label="Envoyer le message"
       title="Envoyer (Entrée)"
-      disabled={availability.disabled || !canSend(state)}
+      disabled={availability.disabled || !canSend(prompt)}
       onclick={() => void send()}
     >
-      {#if state.sending}<span class="spin"><Icon name="loader" /></span>{:else}<Icon name="send" />{/if}
+      {#if prompt.sending}<span class="spin"><Icon name="loader" /></span>{:else}<Icon name="send" />{/if}
     </button>
   </div>
   <div class="hint">
-    {#if state.error !== ''}
-      <span class="error"><Icon name="error" size={14} />{state.error}</span>
+    {#if dragging}
+      <span class="drop-hint">Déposer pour joindre les fichiers</span>
+    {:else if prompt.error !== ''}
+      <span class="error"><Icon name="error" size={14} />{prompt.error}</span>
     {:else}
       <span><kbd>Entrée</kbd> envoyer</span>
       <span class="sep">·</span>
@@ -144,6 +231,83 @@
     box-shadow:
       var(--shadow),
       0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+
+  .bar.dropping {
+    border-color: var(--accent);
+    border-style: dashed;
+    background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
+  }
+
+  .files {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0 0 6px;
+    padding: 0;
+    list-style: none;
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 260px;
+    height: 26px;
+    padding: 0 4px 0 8px;
+    font-size: 12px;
+    color: var(--text-2);
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+  }
+
+  .file-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .remove,
+  .attach {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    color: var(--text-2);
+    background: transparent;
+    border: none;
+    transition:
+      background 120ms var(--ease),
+      color 120ms var(--ease);
+  }
+
+  .remove {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+  }
+
+  .attach {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-md);
+  }
+
+  .remove:hover:not(:disabled),
+  .attach:hover:not(:disabled) {
+    color: var(--text);
+    background: var(--surface);
+  }
+
+  .attach:disabled,
+  .remove:disabled {
+    opacity: 0.5;
+  }
+
+  .drop-hint {
+    color: var(--accent);
   }
 
   .target {

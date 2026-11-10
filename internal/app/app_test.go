@@ -36,11 +36,13 @@ func (f *fakeEngine) StartFailures() []core.StartFailure {
 }
 
 type fakeDialogs struct {
-	dir string
-	err error
+	dir   string
+	files []string
+	err   error
 }
 
 func (d fakeDialogs) ChooseDirectory() (string, error) { return d.dir, d.err }
+func (d fakeDialogs) ChooseFiles() ([]string, error)   { return d.files, d.err }
 
 type noEmit struct{}
 
@@ -72,6 +74,33 @@ func TestNewSessionCancelledStartsNothing(t *testing.T) {
 	}
 	if len(e.newSessions) != 0 {
 		t.Errorf("sessions started: %v", e.newSessions)
+	}
+}
+
+func TestChooseFilesReturnsThePickedPaths(t *testing.T) {
+	a := New(noEmit{}, fakeDialogs{files: []string{"/work/a.txt", "/work/b c.png"}}, nil)
+	got, err := a.ChooseFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != "/work/a.txt" || got[1] != "/work/b c.png" {
+		t.Errorf("files: %v", got)
+	}
+}
+
+func TestChooseFilesCancelledReturnsNothing(t *testing.T) {
+	a := New(noEmit{}, fakeDialogs{}, nil)
+	got, err := a.ChooseFiles()
+	if err != nil || len(got) != 0 {
+		t.Errorf("files %v, error %v", got, err)
+	}
+}
+
+func TestChooseFilesPassesTheDialogError(t *testing.T) {
+	boom := errors.New("boom")
+	a := New(noEmit{}, fakeDialogs{files: []string{"/work/a.txt"}, err: boom}, nil)
+	if _, err := a.ChooseFiles(); !errors.Is(err, boom) {
+		t.Errorf("error: %v", err)
 	}
 }
 

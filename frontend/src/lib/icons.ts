@@ -3,6 +3,7 @@ const CIRCLE = 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z'
 /** Path data of the icons, drawn on a 24 x 24 grid and stroked. */
 export const ICONS = {
   plus: ['M12 5v14', 'M5 12h14'],
+  file: ['M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z', 'M14 3v6h6'],
   help: [CIRCLE, 'M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3', 'M12 17h.01'],
   folder: [
     'M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z',
