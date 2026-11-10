@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"claude-tower/internal/app"
@@ -43,6 +44,9 @@ func main() {
 type window struct {
 	ctx   context.Context
 	ready chan struct{}
+	// guarded is set once the frontend confirms the closing of the window, and
+	// quitting once the user confirmed it.
+	guarded, quitting atomic.Bool
 }
 
 const windowWait = 30 * time.Second
@@ -89,6 +93,25 @@ func (w *window) ChooseFiles() ([]string, error) {
 	return runtime.OpenMultipleFilesDialog(ctx, runtime.OpenDialogOptions{Title: "Fichiers à joindre"})
 }
 
+func (w *window) GuardQuit() { w.guarded.Store(true) }
+
+func (w *window) Quit() {
+	w.quitting.Store(true)
+	if ctx, err := w.context(); err == nil {
+		runtime.Quit(ctx)
+	}
+}
+
+// beforeClose keeps the window open and asks the frontend for a confirmation,
+// unless the frontend cannot show one or the user already confirmed.
+func (w *window) beforeClose(ctx context.Context) bool {
+	if w.quitting.Load() || !w.guarded.Load() {
+		return false
+	}
+	runtime.EventsEmit(ctx, "quit-requested")
+	return true
+}
+
 func runApp() error {
 	w := newWindow()
 	a := app.New(w, w, os.Environ())
@@ -107,7 +130,8 @@ func runApp() error {
 			w.setContext(ctx)
 			app.Startup(a)
 		},
-		OnShutdown: func(context.Context) { app.Shutdown(a) },
-		Bind:       []any{a},
+		OnBeforeClose: w.beforeClose,
+		OnShutdown:    func(context.Context) { app.Shutdown(a) },
+		Bind:          []any{a},
 	})
 }

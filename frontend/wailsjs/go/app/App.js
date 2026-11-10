@@ -22,6 +22,10 @@ export function Focus(arg1) {
   return window['go']['app']['App']['Focus'](arg1);
 }
 
+export function GuardQuit() {
+  return window['go']['app']['App']['GuardQuit']();
+}
+
 export function Kill(arg1) {
   return window['go']['app']['App']['Kill'](arg1);
 }
@@ -36,6 +40,10 @@ export function OpenTerminal(arg1, arg2, arg3) {
 
 export function Prompt(arg1, arg2) {
   return window['go']['app']['App']['Prompt'](arg1, arg2);
+}
+
+export function Quit() {
+  return window['go']['app']['App']['Quit']();
 }
 
 export function Screen(arg1, arg2) {

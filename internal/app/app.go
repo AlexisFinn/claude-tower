@@ -41,6 +41,11 @@ type Dialogs interface {
 	// ChooseFiles returns the files picked by the user, empty when the dialog
 	// is cancelled.
 	ChooseFiles() ([]string, error)
+	// GuardQuit makes closing the window ask the frontend for a confirmation
+	// instead, once the frontend shows it.
+	GuardQuit()
+	// Quit closes the application without asking again.
+	Quit()
 }
 
 // Engine is what App needs from core.Core.
@@ -284,6 +289,18 @@ func (a *App) NewSession(name string) error {
 	ctx, cancel := callContext()
 	defer cancel()
 	return e.NewSession(ctx, dir, name)
+}
+
+// GuardQuit tells that the frontend confirms the closing of the window: from
+// then on, closing it emits "quit-requested" instead.
+func (a *App) GuardQuit() {
+	a.dialogs.GuardQuit()
+}
+
+// Quit closes the application after the user confirmed it. The sessions of
+// the private server keep running.
+func (a *App) Quit() {
+	a.dialogs.Quit()
 }
 
 // ChooseFiles asks for files to attach to a message and returns their absolute

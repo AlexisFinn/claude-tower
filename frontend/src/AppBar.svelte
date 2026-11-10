@@ -4,7 +4,12 @@
   import { frameClass } from './lib/frame'
   import type { StateCount } from './lib/summary'
 
-  let { summary, onHelp, onNew }: { summary: StateCount[]; onHelp: () => void; onNew: () => void } = $props()
+  let {
+    summary,
+    onHelp,
+    onNew,
+    onQuit,
+  }: { summary: StateCount[]; onHelp: () => void; onNew: () => void; onQuit: () => void } = $props()
 </script>
 
 <header class="appbar">
@@ -30,6 +35,14 @@
     <button class="btn btn-primary" title="Nouvelle session (n)" onclick={onNew}>
       <Icon name="plus" />
       Nouvelle session
+    </button>
+    <button
+      class="icon-btn"
+      aria-label="Quitter"
+      title="Quitter Claude Tower (Ctrl+Q) : les sessions continuent de tourner"
+      onclick={onQuit}
+    >
+      <Icon name="power" />
     </button>
   </div>
 </header>

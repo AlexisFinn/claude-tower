@@ -20,6 +20,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { combos: [['k'], ['↑']], label: 'Sélectionner la carte du dessus' },
       { combos: [['j'], ['↓']], label: 'Sélectionner la carte du dessous' },
       { combos: [['?']], label: 'Afficher cette aide' },
+      { combos: [['Ctrl', 'Q']], label: 'Quitter l’application (les sessions continuent)' },
     ],
   },
   {

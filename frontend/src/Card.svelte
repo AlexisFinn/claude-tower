@@ -233,7 +233,7 @@
           </button>
           {#if card.Private || card.Detached}
             <button class="icon-btn" aria-label="Arrêter la session" title="Arrêter la session (x)" onclick={(e) => act(e, onKill)}>
-              <Icon name="stop" />
+              <Icon name="x" />
             </button>
           {/if}
         </div>

@@ -70,6 +70,7 @@ Chaque couleur d'état existe aussi en version douce (`color-mix(in srgb, <coule
 - **À droite** :
   - un bouton icône `?`, qui ouvre la fenêtre des raccourcis ;
   - le bouton principal « Nouvelle session » (`--accent`, icône +), qui fait comme la touche `n`.
+  - un bouton icône « Quitter » (marche/arrêt), qui fait comme Ctrl+Q hors plein écran. Il demande une confirmation qui rappelle que les sessions continuent de tourner ; la fermeture de la fenêtre par le bureau passe par la même confirmation, dès que l’interface est chargée.
 
 ### Carte de session
 

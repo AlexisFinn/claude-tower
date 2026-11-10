@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { Cards, FitSession, Focus, Kill, NewSession, Screen, StartFailures } from '../wailsjs/go/app/App'
+  import { Cards, FitSession, Focus, GuardQuit, Kill, NewSession, Quit, Screen, StartFailures } from '../wailsjs/go/app/App'
   import type { core } from '../wailsjs/go/models'
   import AppBar from './AppBar.svelte'
   import Card from './Card.svelte'
@@ -24,6 +24,7 @@
   import { reconcileSelection } from './lib/selection'
   import { startFailureText } from './lib/startFailures'
   import { summarizeStates } from './lib/summary'
+  import { EventsOn } from '../wailsjs/runtime/runtime'
   import { createFitRequests } from './lib/fitRequests'
   import { createToasts, type Toast, type ToastKind } from './lib/toasts'
   import { createTypingPause } from './lib/typingPause'
@@ -38,6 +39,7 @@
   let selected = $state<number | null>(null)
   let fullscreen = $state<core.Card | null>(null)
   let confirmKill = $state<core.Card | null>(null)
+  let confirmQuit = $state(false)
   let unavailable = $state.raw<Set<number>>(new Set())
   let helpOpen = $state(false)
   let newSessionOpen = $state(false)
@@ -184,7 +186,11 @@
       if (!document.hidden) refresher.kick()
     }
     document.addEventListener('visibilitychange', onVisibility)
+    // Closing the window asks here first, now that a confirmation can show.
+    const stopQuitRequests = EventsOn('quit-requested', askQuit)
+    void GuardQuit()
     return () => {
+      stopQuitRequests()
       refresher.stop()
       typing.dispose()
       document.removeEventListener('visibilitychange', onVisibility)
@@ -237,6 +243,19 @@
       notify('error', errorMessage(e))
     } finally {
       starting = false
+    }
+  }
+
+  function askQuit(): void {
+    confirmQuit = true
+  }
+
+  async function quitConfirmed(): Promise<void> {
+    confirmQuit = false
+    try {
+      await Quit()
+    } catch (e) {
+      notify('error', errorMessage(e))
     }
   }
 
@@ -316,15 +335,24 @@
   }
 
   function onKeydown(e: KeyboardEvent): void {
+    // In fullscreen, Ctrl+Q belongs to the session.
+    if (fullscreen === null && e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === 'q') {
+      e.preventDefault()
+      askQuit()
+      return
+    }
     const route = routeKey(
-      { fullscreen: fullscreen !== null, confirmKill: confirmKill !== null, newSession: newSessionOpen, help: helpOpen },
+      { fullscreen: fullscreen !== null, confirmKill: confirmKill !== null || confirmQuit, newSession: newSessionOpen, help: helpOpen },
       e,
       keyTarget(e.target),
     )
     if (route === null) return
     e.preventDefault()
     if (route.layer === 'confirm') {
-      if (route.action === 'accept') void killConfirmed()
+      if (confirmQuit) {
+        if (route.action === 'accept') void quitConfirmed()
+        else confirmQuit = false
+      } else if (route.action === 'accept') void killConfirmed()
       else confirmKill = null
     } else if (route.layer === 'newSession') {
       newSessionOpen = false
@@ -350,7 +378,7 @@
 <svelte:window onkeydown={onKeydown} onclickcapture={releaseMouseFocus} />
 
 <div class="tower">
-  <AppBar {summary} onHelp={() => (helpOpen = true)} onNew={newSession} />
+  <AppBar {summary} onHelp={() => (helpOpen = true)} onNew={newSession} onQuit={askQuit} />
 
   <div class="main">
     <div class="area" bind:clientWidth={areaWidth} bind:clientHeight={areaHeight}>
@@ -388,7 +416,7 @@
   <PromptBar
     bind:this={promptBar}
     card={selectedCard}
-    dropBlocked={fullscreen !== null || helpOpen || confirmKill !== null || newSessionOpen}
+    dropBlocked={fullscreen !== null || helpOpen || confirmKill !== null || confirmQuit || newSessionOpen}
     onSent={() => {
       typing.end()
       refresher.kick()
@@ -409,7 +437,18 @@
     <NewSessionDialog onSubmit={(name) => void startSession(name)} onClose={() => (newSessionOpen = false)} />
   {/if}
 
-  {#if confirmKill !== null}
+  {#if confirmQuit}
+    <Dialog title="Quitter Claude Tower" role="alertdialog" onClose={() => (confirmQuit = false)}>
+      <p class="confirm">
+        Les sessions continuent de tourner après la fermeture : quitter l’application ne les arrête pas. Tu les
+        retrouves en la relançant.
+      </p>
+      <div class="actions">
+        <button class="btn" data-autofocus title="Échap" onclick={() => (confirmQuit = false)}>Annuler</button>
+        <button class="btn btn-primary" title="Entrée" onclick={() => void quitConfirmed()}>Quitter</button>
+      </div>
+    </Dialog>
+  {:else if confirmKill !== null}
     <Dialog title="Arrêter la session" role="alertdialog" onClose={() => (confirmKill = null)}>
       <p class="confirm">
         {#if confirmKill.Detached}
