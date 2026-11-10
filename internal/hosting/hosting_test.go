@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPrivateSocketDir(t *testing.T) {
@@ -100,6 +101,9 @@ func TestNewSystem(t *testing.T) {
 	}
 	if h.SessionConfigDir != "" {
 		t.Errorf("default directory passed to sessions: %q", h.SessionConfigDir)
+	}
+	if h.StartupCheckDelay != time.Second {
+		t.Errorf("startup check delay: %v", h.StartupCheckDelay)
 	}
 	h, _ = NewSystem([]string{"HOME=" + home, "CLAUDE_CONFIG_DIR=/c"})
 	if h.ClaudeConfigDir != "/c" || h.SessionConfigDir != "/c" {

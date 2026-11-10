@@ -105,7 +105,7 @@ claude-tower/
 ├── internal/tmux/             # binary and version, servers, panes, clients, capture, paste, view sessions
 ├── internal/locate/           # process tree, session→pane matching
 ├── internal/hosting/          # private server: socket, config, environment, new session, run, kill
-├── internal/focus/            # raise a terminal window: X11, macOS, otherwise ErrUnsupported
+├── internal/focus/            # raise a terminal window: X11, macOS, otherwise errUnsupported
 ├── internal/core/             # snapshot, cards, screen, prompt, focus, new/kill session
 ├── internal/ptyterm/          # embedded full-screen terminal
 └── internal/app/              # methods bound to Wails; Wails calls behind interfaces
@@ -192,7 +192,7 @@ func (s Server) SweepViewSessions(ctx) error
 - Une session est « affichée » (`Attached`) si un client est attaché à la même session ou à une session du même groupe (`#{session_group}`), quelle que soit la fenêtre courante de ce client.
 
 **Collage : `Paste`**
-0. `Sanitize(text)` (fonction pure) : CRLF et CR seuls deviennent LF, puis tous les contrôles C0 et C1 sont retirés sauf `\n` et `\t` (ESC compris). Le collage ne dépend ainsi pas de l'assainissement propre à chaque version de tmux ;
+0. `sanitize(text)` (fonction pure) : CRLF et CR seuls deviennent LF, puis tous les contrôles C0 et C1 sont retirés sauf `\n` et `\t` (ESC compris). Le collage ne dépend ainsi pas de l'assainissement propre à chaque version de tmux ;
 1. `if-shell -F -t <pane> '#{pane_in_mode}' 'send-keys -t <pane> -X cancel'` ;
 2. `load-buffer -b claude-tower-<n> -`, texte sur l'entrée standard ;
 3. `paste-buffer -p -d -b claude-tower-<n> -t <pane>`, sans `-S` ;
@@ -247,7 +247,7 @@ Si `infocmp tmux-256color` échoue, on remplace `tmux-256color` par `screen-256c
 
 **Environnement de la session**
 - `SessionEnv(base []string, configDir string) []string` : tout `base` sauf `TMUX`, `TMUX_PANE`, `TERM`, `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`, `COLUMNS` et `LINES`. Pour une session lancée **depuis l'application**, on y pose `CLAUDE_CONFIG_DIR=<dossier lu par l'application>` (`$CLAUDE_CONFIG_DIR`, sinon la clé `claudeConfigDir` de `config.json`, sinon `~/.claude`). Pour `run`, la valeur de l'appelant est gardée telle quelle, et `LANG=C.UTF-8` (`en_US.UTF-8` sous macOS) si aucune locale UTF-8 n'est définie.
-- `LoginShellEnv(ctx)` : `$SHELL -ilc 'env -0'`, avec un délai de 10 s. Il ne sert que si l'application est lancée sans `TERM` (lanceur graphique). Le résultat est fusionné **sous** l'environnement courant, puis mis en cache pour la vie du processus.
+- `loginShellEnv(ctx)` : `$SHELL -ilc 'env -0'`, avec un délai de 10 s. Il ne sert que si l'application est lancée sans `TERM` (lanceur graphique). Le résultat est fusionné **sous** l'environnement courant, puis mis en cache pour la vie du processus.
 - **Transmission sans `argv`** :
   - l'environnement est écrit dans un fichier créé par `os.CreateTemp` dans le dossier `0700` de la socket privée, chaque variable séparée par un octet NUL. Il y a un fichier par tentative, supprimé sur tout chemin d'échec de `NewSession` ;
   - la commande de la session est `<chemin de claude-tower> exec-env <fichier> -- <claude résolu> <args…>` ;
@@ -279,7 +279,7 @@ Si `infocmp tmux-256color` échoue, on remplace `tmux-256color` par `screen-256c
 `Raise(pids []int) error` met au premier plan la fenêtre du premier PID de la liste qui en a une. `Supported() bool` dit à l'avance si c'est possible.
 - **X11** (`DISPLAY` défini, `WAYLAND_DISPLAY` vide), avec `jezek/xgb` : on parcourt `_NET_CLIENT_LIST` et `_NET_WM_PID`, puis on envoie `_NET_ACTIVE_WINDOW` (source 2). Pour un terminal qui gère plusieurs fenêtres (gnome-terminal), c'est la première trouvée qui passe au premier plan : limite connue.
 - **macOS** : le premier PID dont `ps -o comm= -p` contient `.app/`, puis `osascript -e 'tell application "System Events" to set frontmost of (first process whose unix id is <pid>) to true'`. L'erreur éventuelle est renvoyée telle quelle (autorisations).
-- **Sinon** : `ErrUnsupported`.
+- **Sinon** : `errUnsupported`.
 
 #### `internal/core`
 
@@ -345,7 +345,7 @@ func (c *Core) PaneOf(pid int) (tmux.Pane, bool)    // from the last snapshot
 - `NewViewSession` (pas de `destroy-unattached`), `RestoreActivePane`, `SweepViewSessions` ;
 - `NewSession` : identifiants, réessai, commande introuvable, résolution par le shell qui renvoie un alias (refusée) ;
 - `Kill` (refus hors serveur privé, vues tuées d'abord) ;
-- `SessionEnv`, `LoginShellEnv` (fusion), `PrivateSocket` (dossier d'un autre propriétaire, mauvais mode, lien symbolique : refusés), `FindBinary`, `CheckVersion` (`3.0a`, `3.1`, `3.2`, `3.2a`, `3.3a`, `3.8`, `next-3.9`, et `master` accepté) ;
+- `SessionEnv`, `loginShellEnv` (fusion), `PrivateSocket` (dossier d'un autre propriétaire, mauvais mode, lien symbolique : refusés), `FindBinary`, `CheckVersion` (`3.0a`, `3.1`, `3.2`, `3.2a`, `3.3a`, `3.8`, `next-3.9`, et `master` accepté) ;
 - analyse `-F` avec déduplication et exclusion des vues ; `Match` ; analyse de `ps` ;
 - décision de `Focus` ; ordre de `PromptReason` ; `Prompt` refusé quand le fichier de registre passe à `waiting` après `Cards` ;
 - `cli` : `run --resume -c --model x` transmis tel quel, et `exec-env` (environnement appliqué, fichier supprimé) via une fonction d'exécution injectée ;

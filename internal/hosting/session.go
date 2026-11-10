@@ -178,8 +178,9 @@ func cleanName(name string) string {
 }
 
 // NameArgs returns the arguments that give a new session its name, none when
-// the cleaned name is empty. The name stays one argument: the command is not
-// parsed by a shell.
+// the cleaned name is empty. The name stays one argument, which the command
+// does not pass through a shell, and is joined to its flag so that a name
+// starting with "-" is not read as an option.
 func NameArgs(name string) []string {
 	if name = cleanName(name); name == "" {
 		return nil

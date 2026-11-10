@@ -1,6 +1,6 @@
-/** Default background of a thumbnail, the same as the screen of a card. */
+/** Default background of a terminal, thumbnail or fullscreen; the same as --screen in style.css. */
 export const DEFAULT_BG = '#07090c'
-/** Default text color of a thumbnail. */
+/** Default text color of a terminal, thumbnail or fullscreen; the same as --text in style.css. */
 export const DEFAULT_FG = '#e7ecf3'
 
 const ANSI_16 = [
