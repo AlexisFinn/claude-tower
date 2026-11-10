@@ -78,6 +78,16 @@ func (s Server) Exec(ctx context.Context, stdin io.Reader, args ...string) ([]by
 	return run(ctx, stdin, bin, append([]string{"-S", s.Socket}, args...)...)
 }
 
+// ServerNotRunning reports whether err tells that no tmux server listens on
+// the socket, as opposed to a server that answers too slowly.
+func ServerNotRunning(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "no server running") || strings.Contains(msg, "error connecting")
+}
+
 // fallbackDirs are searched after PATH, which is reduced when the application
 // starts from a desktop launcher or the Finder.
 var fallbackDirs = []string{"/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"}

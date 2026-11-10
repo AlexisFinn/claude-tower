@@ -58,10 +58,7 @@ func TestReadProcFixture(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, err := readProc(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := readProc(dir)
 	if want := (Tree{10: 0, 20: 10}); !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v", got)
 	}
@@ -81,10 +78,7 @@ func TestReadProcSkipsEntriesWithoutFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "42"), []byte("42 (sh) S 1 1 1"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := readProc(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := readProc(dir)
 	if want := (Tree{41: 40}); !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v", got)
 	}
@@ -92,11 +86,11 @@ func TestReadProcSkipsEntriesWithoutFile(t *testing.T) {
 
 func TestReadProcMissingDirIsEmpty(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "absent")
-	if tree, err := readProc(missing); err != nil || len(tree) != 0 {
-		t.Errorf("readProc: %v, %v", tree, err)
+	if tree := readProc(missing); len(tree) != 0 {
+		t.Errorf("readProc: %v", tree)
 	}
-	if att, err := readProcAttachments(missing); err != nil || len(att) != 0 {
-		t.Errorf("readProcAttachments: %v, %v", att, err)
+	if att := readProcAttachments(missing); len(att) != 0 {
+		t.Errorf("readProcAttachments: %v", att)
 	}
 }
 

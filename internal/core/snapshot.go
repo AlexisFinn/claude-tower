@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"sort"
-	"strings"
 	"sync"
 
 	"claude-tower/internal/locate"
@@ -73,8 +72,8 @@ func (c *Core) refresh(ctx context.Context) (snapshot, error) {
 	for _, st := range states {
 		if !st.ok {
 			if st.socket == private {
-				privateGone = serverNotRunning(st.err)
-			} else if !serverNotRunning(st.err) {
+				privateGone = tmux.ServerNotRunning(st.err)
+			} else if !tmux.ServerNotRunning(st.err) {
 				userComplete = false
 			}
 			continue
@@ -144,16 +143,6 @@ func (c *Core) readServers(ctx context.Context, servers []tmux.Server) []serverS
 	}
 	wg.Wait()
 	return states
-}
-
-// serverNotRunning reports whether err tells that no tmux server listens on
-// the socket, as opposed to a server that answers too slowly.
-func serverNotRunning(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "no server running") || strings.Contains(msg, "error connecting")
 }
 
 // sortSessions orders sessions by start time, then PID, which keeps the cards

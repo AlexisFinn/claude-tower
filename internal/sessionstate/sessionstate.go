@@ -23,14 +23,35 @@ type Info struct {
 	Background background.Counts
 }
 
+// Option changes how Enrich completes the sessions.
+type Option func(*options)
+
+type options struct {
+	busyOnly bool
+}
+
+// BusyTranscriptsOnly makes Enrich read the transcript of the busy sessions
+// only, the ones whose shown state depends on whether the last turn has
+// ended. The other sessions keep a zero TurnEnded and an empty Activity.
+func BusyTranscriptsOnly() Option {
+	return func(o *options) { o.busyOnly = true }
+}
+
 // Enrich returns one Info per session, in the same order, without modifying
 // sessions. counts holds the background work of the sessions by PID; a session
 // missing from it has none. An unknown count does not mark a session as
 // having background work.
-func Enrich(sessions []registry.Session, finder *transcript.Finder, counts map[int]background.Counts) []Info {
+func Enrich(sessions []registry.Session, finder *transcript.Finder, counts map[int]background.Counts, opts ...Option) []Info {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
 	infos := make([]Info, len(sessions))
 	for i, s := range sessions {
-		act := finder.Last(s.SessionID)
+		var act transcript.Activity
+		if !o.busyOnly || s.State == registry.StateBusy {
+			act = finder.Last(s.SessionID)
+		}
 		bg := counts[s.PID]
 		s.TurnEnded = act.TurnEnded
 		s.HasBackground = bg.Agents > 0 || bg.Shells > 0

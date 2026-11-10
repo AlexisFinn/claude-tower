@@ -49,10 +49,7 @@ func TestReadProcAttachments(t *testing.T) {
 	write("10", "claude\x00attach\x00504d303c\x00")
 	write("11", "claude\x00--resume\x00")
 	write("12", "bash\x00")
-	got, err := readProcAttachments(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := readProcAttachments(dir)
 	if !reflect.DeepEqual(got, Attachments{10: "504d303c"}) {
 		t.Errorf("got %v", got)
 	}

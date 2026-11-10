@@ -1,6 +1,7 @@
 package sessionstate
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,5 +78,27 @@ func TestEnrichActivity(t *testing.T) {
 	infos := Enrich([]registry.Session{{PID: 1, SessionID: sid}}, finder, nil)
 	if infos[0].Activity != "Bash: make" {
 		t.Errorf("activity=%q", infos[0].Activity)
+	}
+}
+
+func TestBusyTranscriptsOnlyReadsBusySessionsOnly(t *testing.T) {
+	finder := finderWith(t,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"make"}}]}}`,
+		`{"type":"system","subtype":"turn_duration"}`)
+	for _, c := range []struct {
+		state    registry.State
+		wantRead bool
+	}{
+		{registry.StateBusy, true},
+		{registry.StateIdle, false},
+		{registry.StateWaiting, false},
+	} {
+		t.Run(fmt.Sprint(c.state), func(t *testing.T) {
+			infos := Enrich([]registry.Session{{PID: 1, SessionID: sid, State: c.state}}, finder, nil, BusyTranscriptsOnly())
+			got := infos[0]
+			if got.Session.TurnEnded != c.wantRead || (got.Activity != "") != c.wantRead {
+				t.Errorf("got %+v, want transcript read: %v", got, c.wantRead)
+			}
+		})
 	}
 }

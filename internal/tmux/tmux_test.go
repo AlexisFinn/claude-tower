@@ -362,3 +362,18 @@ func TestDeadSocketIsIgnoredByCallers(t *testing.T) {
 		t.Errorf("dead socket: panes=%v err=%v", panes, err)
 	}
 }
+
+func TestServerNotRunning(t *testing.T) {
+	for msg, want := range map[string]bool{
+		"tmux: exit status 1: no server running on /s":                     true,
+		"tmux: exit status 1: error connecting to /s (Connection refused)": true,
+		"tmux: délai de 2s dépassé: context deadline exceeded":             false,
+	} {
+		if got := ServerNotRunning(errors.New(msg)); got != want {
+			t.Errorf("%q: %v", msg, got)
+		}
+	}
+	if ServerNotRunning(nil) {
+		t.Error("nil error")
+	}
+}

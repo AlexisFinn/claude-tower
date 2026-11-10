@@ -379,7 +379,7 @@ Prérequis : lot 0 et lot A faits.
 
 #### `internal/app`
 
-Les appels propres à Wails passent par deux interfaces : `Emitter` (`Emit(name string, data any)`) et `Dialogs` (`ChooseDirectory() (string, error)`).
+Les appels propres à Wails passent par l'interface `Window`, qui embarque `Emitter` (`Emit(name string, data any)`) et ajoute les dialogues natifs (`ChooseDirectory() (string, error)`, `ChooseFiles() ([]string, error)`) et la confirmation de fermeture de la fenêtre (`GuardQuit`, `AckQuit`, `Quit`).
 
 Méthodes exposées au frontend :
 - `Cards()`, `Screen(pid, maxLines)`, `Prompt(pid, text)`, `Focus(pid)`, `Kill(pid)` ;

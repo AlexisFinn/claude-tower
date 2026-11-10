@@ -195,3 +195,34 @@ func TestUserSocketDir(t *testing.T) {
 		t.Errorf("default: got %q want %q", got, want)
 	}
 }
+
+func TestEnsureConfigChangedKeepsTheReloadDueWhenTheServerStateIsUnknown(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		err     error
+		wantDue bool
+	}{
+		{"server stopped", errors.New("tmux: exit status 1: no server running on /s"), false},
+		{"timeout", errors.New("tmux: délai de 2s dépassé: context deadline exceeded"), true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rec := &recorder{}
+			h := newHosting(t, rec)
+			rec.reply = func(name string, args []string) ([]byte, error) {
+				if len(args) > 2 && args[2] == "list-sessions" {
+					return nil, c.err
+				}
+				return nil, nil
+			}
+			if err := h.ensureConfigChanged(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			h.mu.Lock()
+			due := h.reloadDue
+			h.mu.Unlock()
+			if due != c.wantDue {
+				t.Errorf("reloadDue=%v want %v", due, c.wantDue)
+			}
+		})
+	}
+}

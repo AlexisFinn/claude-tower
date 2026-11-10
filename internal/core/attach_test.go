@@ -2,7 +2,9 @@ package core
 
 import (
 	"context"
+	"errors"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -300,5 +302,50 @@ func TestCloseStopsAttachWork(t *testing.T) {
 	c.wait()
 	if got := e.fake.newSessions(e.privSock); len(got) != 0 {
 		t.Errorf("attach session started after Close: %v", got)
+	}
+}
+
+// blockingAttachHost is a Host whose NewAttachSession blocks until its
+// context ends.
+type blockingAttachHost struct {
+	Host
+	started chan struct{}
+	cause   atomic.Value // error that ended the context
+	exited  atomic.Bool
+}
+
+func (h *blockingAttachHost) NewAttachSession(ctx context.Context, _, _ string, _ []string) (tmux.Pane, error) {
+	close(h.started)
+	<-ctx.Done()
+	h.cause.Store(ctx.Err())
+	// The pause lets a Close that does not wait for the goroutine return first.
+	time.Sleep(20 * time.Millisecond)
+	h.exited.Store(true)
+	return tmux.Pane{}, ctx.Err()
+}
+
+func TestCloseCancelsRunningAttachWorkAndWaitsForIt(t *testing.T) {
+	e := newEnv(t)
+	bgSession(e)
+	e.tree = locate.Tree{500: 400, 400: 1}
+	host := &blockingAttachHost{Host: e.hosting, started: make(chan struct{})}
+	c := e.core(func(o *Options) { o.Hosting = host })
+	if _, err := c.Cards(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-host.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("attach never started")
+	}
+	if host.exited.Load() {
+		t.Fatal("attach ended before Close")
+	}
+	c.Close()
+	if !host.exited.Load() {
+		t.Error("Close returned before the attach goroutine ended")
+	}
+	if err, _ := host.cause.Load().(error); !errors.Is(err, context.Canceled) {
+		t.Errorf("attach context ended with %v, want cancellation", err)
 	}
 }

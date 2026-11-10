@@ -217,7 +217,7 @@ func runBar(dir string, maxWidth int, d deps, stdout, stderr io.Writer) {
 		}
 	}
 	counts := d.backgroundCounts(context.Background(), finder, idle)
-	shown, _ := shownSessions(sessionstate.Enrich(sessions, finder, counts))
+	shown, _ := shownSessions(sessionstate.Enrich(sessions, finder, counts, sessionstate.BusyTranscriptsOnly()))
 	fmt.Fprintln(stdout, view.Bar(shown, now(), maxWidth))
 }
 
@@ -298,8 +298,9 @@ func systemDeps(getenv func(string) string) deps {
 }
 
 // systemBackground counts the background work of every session from its
-// transcript and the process tree. When the tree cannot be read, the shells
-// are unknown.
+// transcript and the process tree. When ps fails, which only happens on
+// systems without /proc, the shells are unknown. An unreadable /proc gives an
+// empty tree, so no shell is found.
 func systemBackground(ctx context.Context, finder *transcript.Finder, sessions []registry.Session) map[int]background.Counts {
 	tree, err := locate.ReadTree(ctx, tmux.DefaultRunner)
 	readFDs := background.DefaultFDReader()

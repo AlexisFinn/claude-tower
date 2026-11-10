@@ -113,9 +113,12 @@ func (h *Hosting) syncConfig(ctx context.Context, reloadUnchanged bool) error {
 	if err != nil {
 		return err
 	}
-	// A server that is not running reads the file when it starts.
 	if _, err := srv.Exec(ctx, nil, "list-sessions"); err != nil {
-		h.setReloadDue(false)
+		// A server that is not running reads the file when it starts. Any other
+		// failure keeps the reload due for the next call.
+		if tmux.ServerNotRunning(err) {
+			h.setReloadDue(false)
+		}
 		return nil
 	}
 	if _, err := srv.Exec(ctx, nil, "source-file", path); err != nil {

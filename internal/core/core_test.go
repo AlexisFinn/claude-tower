@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -396,6 +397,7 @@ func TestSortSessions(t *testing.T) {
 
 func TestReadServersReportsPanesAndClientsFailures(t *testing.T) {
 	panesLine := paneLine("%1", 10, "$1", "a", "@1", "")
+	var clientCalls atomic.Int32
 	fail := func(failing ...string) tmux.Runner {
 		return func(_ context.Context, _ io.Reader, _ string, args ...string) ([]byte, error) {
 			switch args[2] {
@@ -405,6 +407,7 @@ func TestReadServersReportsPanesAndClientsFailures(t *testing.T) {
 				}
 				return []byte(panesLine), nil
 			default:
+				clientCalls.Add(1)
 				if slices.Contains(failing, "list-clients") {
 					return nil, errors.New("clients failed")
 				}
@@ -413,6 +416,7 @@ func TestReadServersReportsPanesAndClientsFailures(t *testing.T) {
 		}
 	}
 	read := func(failing ...string) serverState {
+		clientCalls.Store(0)
 		return (&Core{}).readServers(context.Background(), []tmux.Server{{Socket: "/s", Run: fail(failing...)}})[0]
 	}
 	if st := read(); !st.ok || len(st.panes) != 1 || len(st.clients) != 1 {
@@ -423,5 +427,8 @@ func TestReadServersReportsPanesAndClientsFailures(t *testing.T) {
 	}
 	if st := read("list-panes", "list-clients"); st.ok || st.err == nil || st.err.Error() != "panes failed" {
 		t.Errorf("both failing: %+v", st)
+	}
+	if n := clientCalls.Load(); n != 0 {
+		t.Errorf("list-clients called %d times after list-panes failed", n)
 	}
 }

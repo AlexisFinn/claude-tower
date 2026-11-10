@@ -23,7 +23,7 @@ func ReadAttachments(ctx context.Context, run tmux.Runner) (Attachments, error) 
 
 func readAttachments(ctx context.Context, run tmux.Runner, goos, procDir string) (Attachments, error) {
 	if goos == "linux" {
-		return readProcAttachments(procDir)
+		return readProcAttachments(procDir), nil
 	}
 	out, err := run(ctx, nil, "ps", "-A", "-o", "pid=,args=")
 	if err != nil {
@@ -32,7 +32,9 @@ func readAttachments(ctx context.Context, run tmux.Runner, goos, procDir string)
 	return parsePSAttachments(string(out)), nil
 }
 
-func readProcAttachments(dir string) (Attachments, error) {
+// readProcAttachments reads the attach clients from the proc directory dir. An
+// unreadable dir yields no attachment.
+func readProcAttachments(dir string) Attachments {
 	out := Attachments{}
 	forEachProc(dir, "cmdline", func(pid int, data []byte) {
 		if !bytes.Contains(data, []byte("attach")) {
@@ -42,7 +44,7 @@ func readProcAttachments(dir string) (Attachments, error) {
 			out[pid] = id
 		}
 	})
-	return out, nil
+	return out
 }
 
 // parsePSAttachments parses the output of `ps -A -o pid=,args=`. Arguments

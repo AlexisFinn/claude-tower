@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -199,20 +198,5 @@ func TestUpdateLaunchesWaitsForLaterListingAndTransientErrors(t *testing.T) {
 	c.launches.update(snapshot{private: e.privSock, privateGone: true}, 1)
 	if got := c.StartFailures(); len(got) != 1 {
 		t.Errorf("failure missing once the server is gone: %+v", got)
-	}
-}
-
-func TestServerNotRunning(t *testing.T) {
-	for msg, want := range map[string]bool{
-		"tmux: exit status 1: no server running on /s":                     true,
-		"tmux: exit status 1: error connecting to /s (Connection refused)": true,
-		"tmux: délai de 2s dépassé: context deadline exceeded":             false,
-	} {
-		if got := serverNotRunning(errors.New(msg)); got != want {
-			t.Errorf("%q: %v", msg, got)
-		}
-	}
-	if serverNotRunning(nil) {
-		t.Error("nil error")
 	}
 }

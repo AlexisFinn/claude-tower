@@ -29,7 +29,7 @@ func ReadTree(ctx context.Context, run tmux.Runner) (Tree, error) {
 
 func readTree(ctx context.Context, run tmux.Runner, goos, procDir string) (Tree, error) {
 	if goos == "linux" {
-		return readProc(procDir)
+		return readProc(procDir), nil
 	}
 	out, err := run(ctx, nil, "ps", "-A", "-o", "pid=,ppid=")
 	if err != nil {
@@ -38,22 +38,23 @@ func readTree(ctx context.Context, run tmux.Runner, goos, procDir string) (Tree,
 	return parsePS(string(out)), nil
 }
 
-func readProc(dir string) (Tree, error) {
+// readProc reads the process tree from the proc directory dir. An unreadable
+// dir yields an empty tree.
+func readProc(dir string) Tree {
 	tree := Tree{}
 	forEachProc(dir, "stat", func(pid int, data []byte) {
 		if ppid, err := parsePPID(string(data)); err == nil {
 			tree[pid] = ppid
 		}
 	})
-	return tree, nil
+	return tree
 }
 
 // forEachProc calls fn with the PID and the content of the file named file
 // of each process listed in the proc directory dir. A process whose file
 // cannot be read, such as one that just exited, is skipped.
 func forEachProc(dir, file string, fn func(pid int, data []byte)) {
-	// An unreadable dir yields the entries read so far, possibly none, like a
-	// glob that matches nothing.
+	// A dir that cannot be listed is treated as having no process.
 	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
 		pid, err := strconv.Atoi(e.Name())
