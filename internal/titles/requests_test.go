@@ -38,6 +38,8 @@ func TestScanRequestsKeepsTypedTextOnly(t *testing.T) {
 		`{"type":"user","isCompactSummary":true,"isVisibleInTranscriptOnly":true,"message":{"content":"This session is being continued"}}`,
 		`{"type":"user","isSidechain":true,"message":{"content":"Brief d'un sous-agent"}}`,
 		`{"type":"user","message":{"content":[{"type":"text","text":"Ajoute un test"},{"type":"image","source":{}}]}}`,
+		// Typed quotes are escaped in the transcript, so a request naming the field is not taken for a tool result.
+		userLine(`pourquoi "tool_use_id" est vide ?`),
 		`not json "user"`,
 		``,
 	)
@@ -45,7 +47,7 @@ func TestScanRequestsKeepsTypedTextOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Requests{Count: 2, Kept: []string{"Corrige le bug de l'export", "Ajoute un test"}}
+	want := Requests{Count: 3, Kept: []string{"Corrige le bug de l'export", "Ajoute un test", `pourquoi "tool_use_id" est vide ?`}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %+v, want %+v", got, want)
 	}

@@ -16,6 +16,7 @@ export const THUMBNAIL_FONT_FAMILY = '"Tower Mono", ui-monospace, "DejaVu Sans M
  */
 export async function loadThumbnailFont(): Promise<void> {
   const faces = ['12px', 'bold 12px', 'italic 12px', 'italic bold 12px'].map((f) => `${f} "Tower Mono"`)
+  if (typeof document === 'undefined' || !document.fonts) return
   await Promise.allSettled(faces.map((f) => document.fonts.load(f)))
 }
 
