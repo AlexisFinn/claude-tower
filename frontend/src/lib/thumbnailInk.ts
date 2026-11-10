@@ -21,6 +21,8 @@ function luminance(hex: string): number {
   return 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
 }
 
+/** Largest number of color pairs kept; truecolor output can produce many, so the cache starts over beyond it. */
+const CACHE_LIMIT = 4096
 const colorCache = new Map<string, string>()
 
 /**
@@ -36,6 +38,7 @@ export function textColor(fg: string, bg: string | null): string {
     const back = bg ?? DEFAULT_BG
     const dark = HEX.test(fg) && HEX.test(back) && luminance(back) < DARK_BACKGROUND && luminance(fg) < DARK_TEXT
     out = dark ? mixColors(fg, '#ffffff', LIFT) : fg
+    if (colorCache.size >= CACHE_LIMIT) colorCache.clear()
     colorCache.set(key, out)
   }
   return out

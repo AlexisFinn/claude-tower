@@ -26,6 +26,14 @@ describe('textColor', () => {
   })
 })
 
+describe('textColor cache', () => {
+  it('gives the same answers after many distinct colors', () => {
+    for (let i = 0; i < 5000; i++) textColor(`#${i.toString(16).padStart(6, '0')}`, null)
+    expect(textColor('#202020', null)).toBe('#585858')
+    expect(textColor('#202020', '#cc0000')).toBe('#202020')
+  })
+})
+
 describe('strokeWidth', () => {
   it('is a small fraction of the font size', () => {
     expect(strokeWidth(20)).toBeCloseTo(0.9)

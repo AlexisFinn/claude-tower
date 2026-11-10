@@ -188,4 +188,34 @@ describe('createThumbnail', () => {
       ['世', '#e7ecf3'],
     ])
   })
+
+  it('sets the text color and outline again after a box drawing glyph', async () => {
+    await show(['\x1b[38;2;32;32;32ma┌b\x1b[0m'], 1)
+    const strokes: { ch: unknown; color: unknown; width: unknown }[] = []
+    const ctx = fakeContext(calls)
+    const record = new Proxy(ctx, {
+      get(t, key: string) {
+        if (key === 'strokeText') return (ch: unknown) => strokes.push({ ch, color: t.strokeStyle, width: t.lineWidth })
+        return (t as unknown as Record<string, unknown>)[key]
+      },
+      set(t, key: string, value) {
+        ;(t as unknown as Record<string, unknown>)[key] = value
+        return true
+      },
+    })
+    draw(createThumbnail(new FakeCanvas(record) as unknown as HTMLCanvasElement), geometry(1))
+    expect(strokes.map((s) => s.ch)).toEqual(['a', 'b'])
+    expect(strokes[1]).toEqual({ ...strokes[0], ch: 'b' })
+    expect(strokes[1].color).toBe('#585858')
+    expect(calls.filter((c) => c.name === 'fillText').map((c) => c.fillStyle)).toEqual(['#585858', '#585858'])
+  })
+
+  it('underlines in the color the text is drawn in', async () => {
+    await show(['\x1b[4;38;2;32;32;32mab\x1b[0m'], 1)
+    const g = geometry(1)
+    draw(createThumbnail(canvas as unknown as HTMLCanvasElement), g)
+    const underlines = calls.filter((c) => c.name === 'fillRect' && (c.args[3] as number) < g.cellHeight / 2)
+    expect(underlines).toHaveLength(2)
+    expect(underlines.every((c) => c.fillStyle === '#585858')).toBe(true)
+  })
 })

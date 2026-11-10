@@ -102,6 +102,7 @@ function paintRow(ctx: CanvasRenderingContext2D, row: Row, y: number, px: Pixels
     const code = c.ch === '' ? 0 : (c.ch.codePointAt(0) ?? 0)
     const color = textColor(c.fg, c.bg)
     if (c.ch !== '' && c.ch.length === 1 && isBoxGlyph(code)) {
+      // Box drawing keeps its own color: frames are drawn as solid shapes, which stay visible.
       paintShapes(ctx, glyphShapes(code, right(c) - x0, height), x0, y0, c.fg)
       fill = ''
       outline = ''
