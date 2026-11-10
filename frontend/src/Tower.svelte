@@ -143,23 +143,37 @@
   }
 
   function newSession(): void {
+    if (!newSessionOpen) {
+      dialogOpening++
+      startError = ''
+    }
     layers = openLayer(layers, { kind: 'newSession' })
   }
 
-  // A start in progress, folder dialog included, keeps a second one from opening another dialog.
-  let starting = false
+  // Each opening of the new session dialog gets a number, so that the end of a start only touches the dialog it
+  // came from. A start in progress keeps that same dialog from submitting a second one.
+  let dialogOpening = $state(0)
+  let startingOpening = $state(0)
+  let startError = $state('')
+  const starting = $derived(startingOpening !== 0 && startingOpening === dialogOpening)
 
-  async function startSession(name: string): Promise<void> {
-    dismiss('newSession')
-    if (starting) return
-    starting = true
+  /** Starts a session from the dialog, and tells whether it succeeded. */
+  async function startSession(name: string, dir: string): Promise<boolean> {
+    if (starting) return false
+    const opening = dialogOpening
+    startingOpening = opening
+    startError = ''
     try {
-      await NewSession(name)
+      await NewSession(name, dir)
+      if (opening === dialogOpening) dismiss('newSession')
       refresher.kick()
+      return true
     } catch (e) {
-      notify('error', errorMessage(e))
+      if (opening === dialogOpening && newSessionOpen) startError = errorMessage(e)
+      else notify('error', errorMessage(e))
+      return false
     } finally {
-      starting = false
+      if (startingOpening === opening) startingOpening = 0
     }
   }
 
@@ -353,7 +367,13 @@
   {/if}
 
   {#if newSessionOpen}
-    <NewSessionDialog onSubmit={(name) => void startSession(name)} onClose={() => dismiss('newSession')} />
+    <NewSessionDialog
+      busy={starting}
+      error={startError}
+      onSubmit={startSession}
+      onEdit={() => (startError = '')}
+      onClose={() => dismiss('newSession')}
+    />
   {/if}
 
   {#if confirmQuit}

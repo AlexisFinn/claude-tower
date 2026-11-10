@@ -5,7 +5,7 @@ Une application de bureau (Linux et macOS) pour **voir et piloter d'un seul écr
 - **Mosaïque** : une carte par session, qui s'adapte au nombre de sessions et occupe toute la fenêtre. Le cadre de chaque carte prend la couleur de l'état de la session. La carte montre l'écran de la session en direct, panneau des tâches compris.
 - **Compositeur** : la barre du bas envoie un message à la session sélectionnée, sans quitter l'application.
 - **Aller à la session** : l'application bascule vers le terminal où la session est déjà affichée, ou l'ouvre en plein écran dans l'application.
-- **Nouvelle session** : lance Claude dans le dossier de ton choix. La session tourne dans un serveur tmux privé et continue même si tu fermes l'application.
+- **Nouvelle session** : lance Claude dans le dossier de ton choix, saisi au clavier ou choisi avec « Parcourir… ». La session tourne dans un serveur tmux privé et continue même si tu fermes l'application.
 
 ![La mosaïque des sessions : une session attend une autorisation, une travaille, une a fini avec un serveur en tâche de fond, une a fini](docs/screenshots/grille.png)
 
@@ -94,7 +94,7 @@ La commande installe les dépendances de l'interface (`npm install`), construit 
 1. `claude-tower list` répond, avec la liste des sessions Claude en cours, ou rien s'il n'y en a pas.
 2. Lance « Claude Tower » depuis le menu des applications (Linux) ou le dossier Applications (macOS).
 3. Ouvre `claude` dans un terminal : sa carte apparaît dans l'application en une seconde environ.
-4. Dans l'application, `n` ouvre le dialogue de nouvelle session : choisis un dossier, et une carte « privée » apparaît, avec l'écran de Claude en direct.
+4. Dans l'application, `n` ouvre le dialogue de nouvelle session : saisis un dossier (`~` par défaut, `~/…` ou un chemin absolu) ou choisis-le avec « Parcourir… », puis valide avec « Créer », et une carte « privée » apparaît, avec l'écran de Claude en direct.
 
 ![Dialogue de nouvelle session](docs/screenshots/nouvelle-session.png)
 

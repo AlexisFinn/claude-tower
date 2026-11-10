@@ -10,6 +10,10 @@ export function Cards() {
   return window['go']['app']['App']['Cards']();
 }
 
+export function ChooseDirectory() {
+  return window['go']['app']['App']['ChooseDirectory']();
+}
+
 export function ChooseFiles() {
   return window['go']['app']['App']['ChooseFiles']();
 }
@@ -34,8 +38,8 @@ export function Kill(arg1) {
   return window['go']['app']['App']['Kill'](arg1);
 }
 
-export function NewSession(arg1) {
-  return window['go']['app']['App']['NewSession'](arg1);
+export function NewSession(arg1, arg2) {
+  return window['go']['app']['App']['NewSession'](arg1, arg2);
 }
 
 export function OpenTerminal(arg1, arg2, arg3) {

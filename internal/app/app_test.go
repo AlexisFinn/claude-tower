@@ -104,13 +104,14 @@ func started(e Engine, w Window) *App {
 	return a
 }
 
-func TestNewSessionStartsInChosenDirectory(t *testing.T) {
+func TestNewSessionStartsInGivenDirectory(t *testing.T) {
+	dir := t.TempDir()
 	e := &fakeEngine{}
-	a := started(e, fakeWindow{dir: "/work/x"})
-	if err := a.NewSession("mon nom"); err != nil {
+	a := started(e, fakeWindow{})
+	if err := a.NewSession("mon nom", dir); err != nil {
 		t.Fatal(err)
 	}
-	if len(e.newSessions) != 1 || e.newSessions[0] != "/work/x" {
+	if len(e.newSessions) != 1 || e.newSessions[0] != dir {
 		t.Errorf("sessions started: %v", e.newSessions)
 	}
 	if len(e.newNames) != 1 || e.newNames[0] != "mon nom" {
@@ -118,14 +119,124 @@ func TestNewSessionStartsInChosenDirectory(t *testing.T) {
 	}
 }
 
-func TestNewSessionCancelledStartsNothing(t *testing.T) {
+func TestNewSessionInvalidDirectoryStartsNothing(t *testing.T) {
 	e := &fakeEngine{}
 	a := started(e, fakeWindow{})
-	if err := a.NewSession(""); err != nil {
-		t.Fatalf("cancelling is not an error: %v", err)
+	if err := a.NewSession("", filepath.Join(t.TempDir(), "absent")); err == nil {
+		t.Fatal("NewSession succeeded")
 	}
 	if len(e.newSessions) != 0 {
 		t.Errorf("sessions started: %v", e.newSessions)
+	}
+}
+
+func TestResolveDir(t *testing.T) {
+	home := t.TempDir()
+	if err := os.Mkdir(filepath.Join(home, "x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(home, "f.txt")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(home, "absent")
+	const errOtherUser = "la forme ~utilisateur n'est pas prise en charge : utilisez ~/… ou un chemin absolu"
+	homeFn := func() (string, error) { return home, nil }
+	tests := []struct {
+		name    string
+		dir     string
+		want    string
+		wantErr string
+	}{
+		{"empty is home", "", home, ""},
+		{"blank is home", "  ", home, ""},
+		{"tilde", "~", home, ""},
+		{"tilde slash", "~/", home, ""},
+		{"tilde path", "~/x", filepath.Join(home, "x"), ""},
+		{"tilde path with trailing slash", "~/x/", filepath.Join(home, "x"), ""},
+		{"surrounding spaces", " " + home + " ", home, ""},
+		{"existing absolute", filepath.Join(home, "x"), filepath.Join(home, "x"), ""},
+		{"absolute with dots", filepath.Join(home, "x", ".."), home, ""},
+		{"missing absolute", missing, "", "le dossier " + missing + " n'existe pas"},
+		{"missing under tilde", "~/absent", "", "le dossier " + missing + " n'existe pas"},
+		{"file", file, "", file + " n'est pas un dossier"},
+		{"relative", "x", "", "indiquez un chemin absolu ou commençant par ~"},
+		{"dot relative", "./x", "", "indiquez un chemin absolu ou commençant par ~"},
+		{"other user", "~root", "", errOtherUser},
+		{"other user with path", "~alex/x", "", errOtherUser},
+		{"under a file", filepath.Join(file, "x"), "", "le dossier " + filepath.Join(file, "x") + " n'existe pas"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveDir(tt.dir, homeFn)
+			if tt.wantErr != "" {
+				if err == nil || err.Error() != tt.wantErr {
+					t.Fatalf("error %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Errorf("got %q, %v; want %q", got, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveDirPermissionDenied(t *testing.T) {
+	locked := filepath.Join(t.TempDir(), "locked")
+	if err := os.Mkdir(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(locked, "x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	target := filepath.Join(locked, "x")
+	if _, err := os.Stat(target); err == nil {
+		t.Skip("the permissions are not enforced for this user")
+	}
+	_, err := resolveDir(target, os.UserHomeDir)
+	want := "le dossier " + target + " est inaccessible (permission refusée)"
+	if err == nil || err.Error() != want {
+		t.Errorf("error %v, want %q", err, want)
+	}
+}
+
+func TestResolveDirHomeUnavailable(t *testing.T) {
+	boom := errors.New("boom")
+	if _, err := resolveDir("~/x", func() (string, error) { return "", boom }); !errors.Is(err, boom) {
+		t.Errorf("error: %v", err)
+	}
+	dir := t.TempDir()
+	if got, err := resolveDir(dir, func() (string, error) { return "", boom }); err != nil || got != dir {
+		t.Errorf("an absolute path does not need the home directory: %q, %v", got, err)
+	}
+}
+
+func TestChooseDirectoryReturnsThePickedPath(t *testing.T) {
+	a := New(fakeWindow{dir: "/work/x"}, nil)
+	got, err := a.ChooseDirectory()
+	if err != nil || got != "/work/x" {
+		t.Errorf("dir %q, error %v", got, err)
+	}
+}
+
+func TestChooseDirectoryCancelledReturnsNothing(t *testing.T) {
+	a := New(fakeWindow{}, nil)
+	got, err := a.ChooseDirectory()
+	if err != nil || got != "" {
+		t.Errorf("dir %q, error %v", got, err)
+	}
+}
+
+func TestChooseDirectoryPassesTheDialogError(t *testing.T) {
+	boom := errors.New("boom")
+	a := New(fakeWindow{dir: "/work/x", err: boom}, nil)
+	if _, err := a.ChooseDirectory(); !errors.Is(err, boom) {
+		t.Errorf("error: %v", err)
 	}
 }
 
@@ -156,15 +267,65 @@ func TestChooseFilesPassesTheDialogError(t *testing.T) {
 	}
 }
 
-func TestNewSessionDialogErrorStartsNothing(t *testing.T) {
-	e := &fakeEngine{}
-	boom := errors.New("boom")
-	a := started(e, fakeWindow{dir: "/work/x", err: boom})
-	if err := a.NewSession(""); !errors.Is(err, boom) {
-		t.Fatalf("got %v", err)
+// blockingWindow holds its native dialogs open until release is closed.
+type blockingWindow struct {
+	fakeWindow
+	opened  chan struct{}
+	release chan struct{}
+}
+
+func (w blockingWindow) ChooseDirectory() (string, error) {
+	w.opened <- struct{}{}
+	<-w.release
+	return w.dir, nil
+}
+
+func (w blockingWindow) ChooseFiles() ([]string, error) {
+	w.opened <- struct{}{}
+	<-w.release
+	return w.files, nil
+}
+
+func TestChooseWhileADialogIsOpenFailsAtOnce(t *testing.T) {
+	w := blockingWindow{
+		fakeWindow: fakeWindow{dir: "/work/x", files: []string{"/work/a.txt"}},
+		opened:     make(chan struct{}, 4),
+		release:    make(chan struct{}),
 	}
-	if len(e.newSessions) != 0 {
-		t.Errorf("sessions started: %v", e.newSessions)
+	a := New(w, nil)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if got, err := a.ChooseDirectory(); err != nil || got != "/work/x" {
+			t.Errorf("first dialog: %q, %v", got, err)
+		}
+	}()
+	<-w.opened
+
+	if _, err := a.ChooseDirectory(); !errors.Is(err, errPickerOpen) {
+		t.Errorf("second directory dialog: %v", err)
+	}
+	if files, err := a.ChooseFiles(); !errors.Is(err, errPickerOpen) || files != nil {
+		t.Errorf("files dialog: %v, %v", files, err)
+	}
+
+	close(w.release)
+	<-done
+	if got, err := a.ChooseDirectory(); err != nil || got != "/work/x" {
+		t.Errorf("after the answer: %q, %v", got, err)
+	}
+	if got, err := a.ChooseFiles(); err != nil || len(got) != 1 {
+		t.Errorf("files after the answer: %v, %v", got, err)
+	}
+}
+
+func TestChooseReleasesTheGuardOnError(t *testing.T) {
+	boom := errors.New("boom")
+	a := New(fakeWindow{err: boom}, nil)
+	for range 2 {
+		if _, err := a.ChooseFiles(); !errors.Is(err, boom) {
+			t.Errorf("error: %v", err)
+		}
 	}
 }
 
@@ -178,7 +339,7 @@ func TestMethodsFailWithStartupError(t *testing.T) {
 	if _, err := a.Cards(); err == nil {
 		t.Error("Cards succeeded")
 	}
-	if err := a.NewSession(""); err == nil {
+	if err := a.NewSession("", ""); err == nil {
 		t.Error("NewSession succeeded")
 	}
 	if _, err := a.OpenTerminal(1, 80, 24); err == nil {

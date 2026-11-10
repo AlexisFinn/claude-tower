@@ -108,6 +108,7 @@ Chaque couleur d'état existe aussi en version douce (`color-mix(in srgb, <coule
   - voile `rgba(0,0,0,0.55)` avec `backdrop-filter: blur(4px)`, panneau `--surface-2` de 420 px, `--radius-lg` ;
   - titre en 15 px semi-gras, texte en `--text-2` ;
   - bouton « Annuler » secondaire, qui a le focus par défaut, et bouton « Arrêter la session » en danger.
+- **Dialogue « Nouvelle session »** : même panneau, avec deux champs, « Nom (facultatif) » (focus par défaut) et « Dossier » (une ligne en mono, `~` au départ), et un bouton « Parcourir… » à côté du champ Dossier, qui ouvre le sélecteur natif et remplit le champ ; il est désactivé tant que le sélecteur est ouvert, et le champ reste modifiable au clavier. Boutons « Annuler » et « Créer » (principal, `Entrée`), ce dernier désactivé pendant la création. Une erreur (dossier inexistant, etc.) s'affiche en `--danger` sous le champ Dossier, et le dialogue reste ouvert.
 - **Notifications (toasts)** : elles remplacent les bandeaux.
   - pile en bas à droite, au-dessus du compositeur ;
   - chacune a une icône, un texte, une fermeture, et disparaît seule après 5 s (les erreurs après 8 s) ;

@@ -6,7 +6,14 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"claude-tower/internal/core"
@@ -27,6 +34,7 @@ const (
 var (
 	errNotStarted   = errors.New("application non démarrée")
 	errStartTooLong = errors.New("démarrage trop long")
+	errPickerOpen   = errors.New("un sélecteur de fichiers est déjà ouvert")
 )
 
 // Emitter sends an event to the frontend.
@@ -71,6 +79,11 @@ type Engine interface {
 type App struct {
 	window  Window
 	environ []string
+
+	// picking is set while a native file or directory dialog is open: the
+	// window system serializes them, so a second call would wait for the
+	// first one to be answered.
+	picking atomic.Bool
 
 	// newHosting and newCore build what start wires together.
 	newHosting func(environ []string) (*hosting.Hosting, error)
@@ -298,21 +311,57 @@ func (a *App) FitSession(pid, cols, rows int) (bool, error) {
 	})
 }
 
-// NewSession asks for a directory and starts a session there, with the given
-// name unless it is empty. Cancelling the dialog starts nothing and is not an
-// error.
-func (a *App) NewSession(name string) error {
+// NewSession starts a session in dir, with the given name unless it is empty.
+// dir is an absolute path or starts with "~"; an empty dir means the home
+// directory.
+func (a *App) NewSession(name, dir string) error {
 	e, err := a.ready()
 	if err != nil {
 		return err
 	}
-	dir, err := a.window.ChooseDirectory()
-	if err != nil || dir == "" {
+	dir, err = resolveDir(dir, os.UserHomeDir)
+	if err != nil {
 		return err
 	}
 	ctx, cancel := callContext()
 	defer cancel()
 	return e.NewSession(ctx, dir, name)
+}
+
+// resolveDir turns what the user typed into the absolute path of an existing
+// directory. A leading "~" stands for the home directory given by home, and an
+// empty dir is the home directory itself.
+func resolveDir(dir string, home func() (string, error)) (string, error) {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		dir = "~"
+	}
+	if strings.HasPrefix(dir, "~") && dir != "~" && !strings.HasPrefix(dir, "~/") {
+		return "", errors.New("la forme ~utilisateur n'est pas prise en charge : utilisez ~/… ou un chemin absolu")
+	}
+	if dir == "~" || strings.HasPrefix(dir, "~/") {
+		h, err := home()
+		if err != nil {
+			return "", fmt.Errorf("dossier personnel introuvable : %w", err)
+		}
+		dir = filepath.Join(h, dir[1:])
+	}
+	if !filepath.IsAbs(dir) {
+		return "", errors.New("indiquez un chemin absolu ou commençant par ~")
+	}
+	dir = filepath.Clean(dir)
+	info, err := os.Stat(dir)
+	switch {
+	case errors.Is(err, fs.ErrNotExist), errors.Is(err, syscall.ENOTDIR):
+		return "", fmt.Errorf("le dossier %s n'existe pas", dir)
+	case errors.Is(err, fs.ErrPermission):
+		return "", fmt.Errorf("le dossier %s est inaccessible (permission refusée)", dir)
+	case err != nil:
+		return "", fmt.Errorf("le dossier %s est inaccessible : %w", dir, errors.Unwrap(err))
+	case !info.IsDir():
+		return "", fmt.Errorf("%s n'est pas un dossier", dir)
+	}
+	return dir, nil
 }
 
 // GuardQuit tells whether the frontend confirms the closing of the window:
@@ -334,9 +383,27 @@ func (a *App) Quit() {
 }
 
 // ChooseFiles asks for files to attach to a message and returns their absolute
-// paths. Cancelling the dialog returns no path and is not an error.
+// paths. Cancelling the dialog returns no path and is not an error. It fails
+// at once while another native dialog is open.
 func (a *App) ChooseFiles() ([]string, error) {
-	return a.window.ChooseFiles()
+	return pick(a, a.window.ChooseFiles)
+}
+
+// ChooseDirectory asks for a directory with the native dialog and returns its
+// absolute path. Cancelling the dialog returns "" and is not an error. It
+// fails at once while another native dialog is open.
+func (a *App) ChooseDirectory() (string, error) {
+	return pick(a, a.window.ChooseDirectory)
+}
+
+// pick runs a native dialog unless another one is open.
+func pick[T any](a *App, open func() (T, error)) (T, error) {
+	if !a.picking.CompareAndSwap(false, true) {
+		var zero T
+		return zero, errPickerOpen
+	}
+	defer a.picking.Store(false)
+	return open()
 }
 
 // OpenTerminal shows a session in a new terminal of cols by rows cells and

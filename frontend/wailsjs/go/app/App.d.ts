@@ -6,6 +6,8 @@ export function AckQuit():Promise<void>;
 
 export function Cards():Promise<Array<core.Card>>;
 
+export function ChooseDirectory():Promise<string>;
+
 export function ChooseFiles():Promise<Array<string>>;
 
 export function CloseTerminal(arg1:number):Promise<void>;
@@ -18,7 +20,7 @@ export function GuardQuit(arg1:boolean):Promise<void>;
 
 export function Kill(arg1:number):Promise<void>;
 
-export function NewSession(arg1:string):Promise<void>;
+export function NewSession(arg1:string,arg2:string):Promise<void>;
 
 export function OpenTerminal(arg1:number,arg2:number,arg3:number):Promise<number>;
 
