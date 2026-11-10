@@ -3,7 +3,9 @@ package core
 import (
 	"context"
 
+	"claude-tower/internal/background"
 	"claude-tower/internal/registry"
+	"claude-tower/internal/sessionstate"
 	"claude-tower/internal/tmux"
 	"claude-tower/internal/view"
 )
@@ -37,12 +39,13 @@ func (c *Core) Cards(ctx context.Context) ([]Card, error) {
 		return nil, err
 	}
 	now := c.opts.Now()
+	counts := make(map[int]background.Counts, len(snap.sessions))
+	for _, s := range snap.sessions {
+		counts[s.PID] = c.backgroundCounts(s, snap.tree, now)
+	}
 	cards := make([]Card, 0, len(snap.sessions))
-	for i, s := range snap.sessions {
-		act := c.finder.Last(s.SessionID)
-		s.TurnEnded = act.TurnEnded
-		bg := c.backgroundCounts(s, snap.tree, now)
-		s.HasBackground = bg.Agents > 0 || bg.Shells > 0
+	for i, info := range sessionstate.Enrich(snap.sessions, c.finder, counts) {
+		s, bg := info.Session, info.Background
 		card := Card{
 			PID:      s.PID,
 			Order:    i,
@@ -51,7 +54,7 @@ func (c *Core) Cards(ctx context.Context) ([]Card, error) {
 			Label:    view.Label(s),
 			Since:    view.Duration(s.StatusSince, now),
 			Cwd:      view.ShortPath(s.Cwd, c.opts.Home),
-			Activity: act.Text,
+			Activity: info.Activity,
 
 			BackgroundAgents: bg.Agents,
 			BackgroundShells: bg.Shells,

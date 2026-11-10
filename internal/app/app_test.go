@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -22,52 +23,82 @@ type fakeEngine struct {
 	cards       []core.Card
 	onSweep     func()
 	closed      bool
+	// err is returned by the methods that return an error.
+	err error
+	// calls lists the methods called, with their arguments, and deadlines
+	// the methods that got a context with a deadline.
+	mu        sync.Mutex
+	calls     []string
+	deadlines []string
 }
 
-func (f *fakeEngine) Cards(context.Context) ([]core.Card, error) { return f.cards, nil }
-func (f *fakeEngine) Screen(context.Context, int, int) (core.Screen, error) {
-	return core.Screen{}, nil
+func (f *fakeEngine) record(ctx context.Context, call string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, call)
+	if _, ok := ctx.Deadline(); ok {
+		f.deadlines = append(f.deadlines, call)
+	}
 }
-func (f *fakeEngine) Prompt(context.Context, int, string) error { return nil }
-func (f *fakeEngine) Focus(context.Context, int) (core.FocusResult, error) {
-	return core.FocusResult{}, nil
+
+func (f *fakeEngine) Cards(ctx context.Context) ([]core.Card, error) {
+	f.record(ctx, "Cards")
+	return f.cards, f.err
+}
+func (f *fakeEngine) Screen(ctx context.Context, pid, maxLines int) (core.Screen, error) {
+	f.record(ctx, fmt.Sprintf("Screen %d %d", pid, maxLines))
+	return core.Screen{Width: pid, Height: maxLines}, f.err
+}
+func (f *fakeEngine) Prompt(ctx context.Context, pid int, text string) error {
+	f.record(ctx, fmt.Sprintf("Prompt %d %s", pid, text))
+	return f.err
+}
+func (f *fakeEngine) Focus(ctx context.Context, pid int) (core.FocusResult, error) {
+	f.record(ctx, fmt.Sprintf("Focus %d", pid))
+	return core.FocusResult{Mode: "embedded"}, f.err
 }
 func (f *fakeEngine) NewSession(_ context.Context, dir, name string) error {
 	f.newSessions = append(f.newSessions, dir)
 	f.newNames = append(f.newNames, name)
 	return nil
 }
-func (f *fakeEngine) Kill(context.Context, int) error                  { return nil }
-func (f *fakeEngine) Fit(context.Context, int, int, int) (bool, error) { return true, nil }
-func (f *fakeEngine) PaneOf(int) (tmux.Pane, bool)                     { return tmux.Pane{}, false }
-func (f *fakeEngine) Close()                                           { f.closed = true }
+func (f *fakeEngine) Kill(ctx context.Context, pid int) error {
+	f.record(ctx, fmt.Sprintf("Kill %d", pid))
+	return f.err
+}
+func (f *fakeEngine) Fit(ctx context.Context, pid, cols, rows int) (bool, error) {
+	f.record(ctx, fmt.Sprintf("Fit %d %d %d", pid, cols, rows))
+	return true, f.err
+}
+func (f *fakeEngine) PaneOf(int) (tmux.Pane, bool) { return tmux.Pane{}, false }
+func (f *fakeEngine) Close()                       { f.closed = true }
 func (f *fakeEngine) Sweep(context.Context) {
 	if f.onSweep != nil {
 		f.onSweep()
 	}
 }
 func (f *fakeEngine) StartFailures() []core.StartFailure {
+	f.mu.Lock()
+	f.calls = append(f.calls, "StartFailures")
+	f.mu.Unlock()
 	return []core.StartFailure{{Name: "proj"}}
 }
 
-type fakeDialogs struct {
+type fakeWindow struct {
 	dir   string
 	files []string
 	err   error
 }
 
-func (d fakeDialogs) ChooseDirectory() (string, error) { return d.dir, d.err }
-func (d fakeDialogs) ChooseFiles() ([]string, error)   { return d.files, d.err }
-func (d fakeDialogs) GuardQuit(bool)                   {}
-func (d fakeDialogs) AckQuit()                         {}
-func (d fakeDialogs) Quit()                            {}
+func (w fakeWindow) Emit(string, any)                 {}
+func (w fakeWindow) ChooseDirectory() (string, error) { return w.dir, w.err }
+func (w fakeWindow) ChooseFiles() ([]string, error)   { return w.files, w.err }
+func (w fakeWindow) GuardQuit(bool)                   {}
+func (w fakeWindow) AckQuit()                         {}
+func (w fakeWindow) Quit()                            {}
 
-type noEmit struct{}
-
-func (noEmit) Emit(string, any) {}
-
-func started(e Engine, d Dialogs) *App {
-	a := New(noEmit{}, d, nil)
+func started(e Engine, w Window) *App {
+	a := New(w, nil)
 	a.setEngine(e)
 	close(a.started)
 	return a
@@ -75,7 +106,7 @@ func started(e Engine, d Dialogs) *App {
 
 func TestNewSessionStartsInChosenDirectory(t *testing.T) {
 	e := &fakeEngine{}
-	a := started(e, fakeDialogs{dir: "/work/x"})
+	a := started(e, fakeWindow{dir: "/work/x"})
 	if err := a.NewSession("mon nom"); err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +120,7 @@ func TestNewSessionStartsInChosenDirectory(t *testing.T) {
 
 func TestNewSessionCancelledStartsNothing(t *testing.T) {
 	e := &fakeEngine{}
-	a := started(e, fakeDialogs{})
+	a := started(e, fakeWindow{})
 	if err := a.NewSession(""); err != nil {
 		t.Fatalf("cancelling is not an error: %v", err)
 	}
@@ -99,7 +130,7 @@ func TestNewSessionCancelledStartsNothing(t *testing.T) {
 }
 
 func TestChooseFilesReturnsThePickedPaths(t *testing.T) {
-	a := New(noEmit{}, fakeDialogs{files: []string{"/work/a.txt", "/work/b c.png"}}, nil)
+	a := New(fakeWindow{files: []string{"/work/a.txt", "/work/b c.png"}}, nil)
 	got, err := a.ChooseFiles()
 	if err != nil {
 		t.Fatal(err)
@@ -110,7 +141,7 @@ func TestChooseFilesReturnsThePickedPaths(t *testing.T) {
 }
 
 func TestChooseFilesCancelledReturnsNothing(t *testing.T) {
-	a := New(noEmit{}, fakeDialogs{}, nil)
+	a := New(fakeWindow{}, nil)
 	got, err := a.ChooseFiles()
 	if err != nil || len(got) != 0 {
 		t.Errorf("files %v, error %v", got, err)
@@ -119,7 +150,7 @@ func TestChooseFilesCancelledReturnsNothing(t *testing.T) {
 
 func TestChooseFilesPassesTheDialogError(t *testing.T) {
 	boom := errors.New("boom")
-	a := New(noEmit{}, fakeDialogs{files: []string{"/work/a.txt"}, err: boom}, nil)
+	a := New(fakeWindow{files: []string{"/work/a.txt"}, err: boom}, nil)
 	if _, err := a.ChooseFiles(); !errors.Is(err, boom) {
 		t.Errorf("error: %v", err)
 	}
@@ -128,7 +159,7 @@ func TestChooseFilesPassesTheDialogError(t *testing.T) {
 func TestNewSessionDialogErrorStartsNothing(t *testing.T) {
 	e := &fakeEngine{}
 	boom := errors.New("boom")
-	a := started(e, fakeDialogs{dir: "/work/x", err: boom})
+	a := started(e, fakeWindow{dir: "/work/x", err: boom})
 	if err := a.NewSession(""); !errors.Is(err, boom) {
 		t.Fatalf("got %v", err)
 	}
@@ -138,7 +169,7 @@ func TestNewSessionDialogErrorStartsNothing(t *testing.T) {
 }
 
 func TestMethodsFailWithStartupError(t *testing.T) {
-	a := New(noEmit{}, fakeDialogs{}, nil)
+	a := New(fakeWindow{}, nil)
 	a.startErr = errors.New("tmux introuvable")
 	close(a.started)
 	if a.StartupError() != "tmux introuvable" {
@@ -164,7 +195,7 @@ func TestMethodsFailWithStartupError(t *testing.T) {
 
 func TestCardsAreForwarded(t *testing.T) {
 	e := &fakeEngine{cards: []core.Card{{PID: 7}}}
-	a := started(e, fakeDialogs{})
+	a := started(e, fakeWindow{})
 	cards, err := a.Cards()
 	if err != nil || len(cards) != 1 || cards[0].PID != 7 {
 		t.Errorf("got %v %v", cards, err)
@@ -175,7 +206,7 @@ func TestCardsAreForwarded(t *testing.T) {
 }
 
 func TestStartFailuresAreForwarded(t *testing.T) {
-	a := started(&fakeEngine{}, fakeDialogs{})
+	a := started(&fakeEngine{}, fakeWindow{})
 	got, err := a.StartFailures()
 	if err != nil || len(got) != 1 || got[0].Name != "proj" {
 		t.Errorf("got %v %v", got, err)
@@ -183,7 +214,7 @@ func TestStartFailuresAreForwarded(t *testing.T) {
 }
 
 func TestOpenTerminalOfUnknownSessionFails(t *testing.T) {
-	a := started(&fakeEngine{}, fakeDialogs{})
+	a := started(&fakeEngine{}, fakeWindow{})
 	if _, err := a.OpenTerminal(1, 80, 24); err == nil {
 		t.Error("OpenTerminal succeeded")
 	}
@@ -194,7 +225,7 @@ func TestOpenTerminalOfUnknownSessionFails(t *testing.T) {
 }
 
 func TestMethodsFailBeforeStartup(t *testing.T) {
-	a := New(noEmit{}, fakeDialogs{}, nil)
+	a := New(fakeWindow{}, nil)
 	close(a.started)
 	if _, err := a.Cards(); !errors.Is(err, errNotStarted) {
 		t.Errorf("got %v", err)
@@ -202,7 +233,7 @@ func TestMethodsFailBeforeStartup(t *testing.T) {
 }
 
 func TestMethodsWaitForSlowStartup(t *testing.T) {
-	a := New(noEmit{}, fakeDialogs{}, nil)
+	a := New(fakeWindow{}, nil)
 	release := make(chan struct{})
 	a.boot = func(a *App) {
 		<-release
@@ -230,7 +261,7 @@ func TestMethodsWaitForSlowStartup(t *testing.T) {
 }
 
 func TestMethodsFailWhenStartupIsTooLong(t *testing.T) {
-	a := New(noEmit{}, fakeDialogs{}, nil)
+	a := New(fakeWindow{}, nil)
 	a.startWait = 20 * time.Millisecond
 	if _, err := a.Cards(); !errors.Is(err, errStartTooLong) {
 		t.Errorf("got %v", err)
@@ -242,7 +273,7 @@ func TestMethodsFailWhenStartupIsTooLong(t *testing.T) {
 }
 
 func TestStartupWarningIsEmptyWithoutWarning(t *testing.T) {
-	a := started(&fakeEngine{}, fakeDialogs{})
+	a := started(&fakeEngine{}, fakeWindow{})
 	if a.StartupWarning() != "" {
 		t.Errorf("StartupWarning: %q", a.StartupWarning())
 	}
@@ -266,7 +297,7 @@ func (p *startProbe) app(t *testing.T) *App {
 	if p.configDir == "" {
 		p.configDir = filepath.Join(root, "cfg")
 	}
-	a := New(noEmit{}, fakeDialogs{}, nil)
+	a := New(fakeWindow{}, nil)
 	a.newHosting = func([]string) (*hosting.Hosting, error) {
 		p.add("hosting")
 		if p.hostingErr != nil {
@@ -377,9 +408,136 @@ func TestStartConfigErrorIsAWarningAndDoesNotBlock(t *testing.T) {
 	}
 }
 
+// wrappers lists the methods of App that forward to the engine or to the
+// terminals, with the value they return when everything works.
+var wrappers = []struct {
+	name string
+	call func(a *App) (any, error)
+	want any
+	// call is the engine call that the method makes, "" when it makes none.
+	engineCall string
+	// engineFails reports whether the error of the engine reaches the caller.
+	engineFails bool
+}{
+	{"Cards", func(a *App) (any, error) { return a.Cards() }, []core.Card{{PID: 7}}, "Cards", true},
+	{"StartFailures", func(a *App) (any, error) { return a.StartFailures() }, []core.StartFailure{{Name: "proj"}}, "StartFailures", false},
+	{"Screen", func(a *App) (any, error) { return a.Screen(4, 20) }, core.Screen{Width: 4, Height: 20}, "Screen 4 20", true},
+	{"Prompt", func(a *App) (any, error) { return nil, a.Prompt(4, "hi") }, nil, "Prompt 4 hi", true},
+	{"Focus", func(a *App) (any, error) { return a.Focus(4) }, core.FocusResult{Mode: "embedded"}, "Focus 4", true},
+	{"Kill", func(a *App) (any, error) { return nil, a.Kill(4) }, nil, "Kill 4", true},
+	{"FitSession", func(a *App) (any, error) { return a.FitSession(4, 80, 24) }, true, "Fit 4 80 24", true},
+}
+
+// terminalWrappers lists the methods of App that forward to the terminals;
+// all but the closing fail on an unknown session or terminal once the engine
+// is ready.
+var terminalWrappers = []struct {
+	name         string
+	call         func(a *App) error
+	unknownFails bool
+}{
+	{"OpenTerminal", func(a *App) error { _, err := a.OpenTerminal(4, 80, 24); return err }, true},
+	{"TermReady", func(a *App) error { return a.TermReady(3) }, true},
+	{"TermInput", func(a *App) error { return a.TermInput(3, "x") }, true},
+	{"TermResize", func(a *App) error { return a.TermResize(3, 80, 24) }, true},
+	{"CloseTerminal", func(a *App) error { return a.CloseTerminal(3) }, false},
+}
+
+func TestWrappersFailBeforeStartup(t *testing.T) {
+	for _, c := range wrappers {
+		t.Run(c.name, func(t *testing.T) {
+			a := New(fakeWindow{}, nil)
+			close(a.started)
+			if _, err := c.call(a); !errors.Is(err, errNotStarted) {
+				t.Errorf("got %v", err)
+			}
+		})
+	}
+	for _, c := range terminalWrappers {
+		t.Run(c.name, func(t *testing.T) {
+			a := New(fakeWindow{}, nil)
+			close(a.started)
+			if err := c.call(a); !errors.Is(err, errNotStarted) {
+				t.Errorf("got %v", err)
+			}
+		})
+	}
+}
+
+func TestWrappersFailWithTheStartError(t *testing.T) {
+	boom := errors.New("tmux introuvable")
+	for _, c := range wrappers {
+		t.Run(c.name, func(t *testing.T) {
+			a := New(fakeWindow{}, nil)
+			a.startErr = boom
+			close(a.started)
+			if _, err := c.call(a); !errors.Is(err, boom) {
+				t.Errorf("got %v", err)
+			}
+		})
+	}
+	for _, c := range terminalWrappers {
+		t.Run(c.name, func(t *testing.T) {
+			a := New(fakeWindow{}, nil)
+			a.startErr = boom
+			close(a.started)
+			if err := c.call(a); !errors.Is(err, boom) {
+				t.Errorf("got %v", err)
+			}
+		})
+	}
+}
+
+func TestWrappersForwardToTheEngine(t *testing.T) {
+	for _, c := range wrappers {
+		t.Run(c.name, func(t *testing.T) {
+			e := &fakeEngine{cards: []core.Card{{PID: 7}}}
+			a := started(e, fakeWindow{})
+			got, err := c.call(a)
+			if err != nil || !reflect.DeepEqual(got, c.want) {
+				t.Errorf("got %v, %v want %v", got, err, c.want)
+			}
+			if !reflect.DeepEqual(e.calls, []string{c.engineCall}) {
+				t.Errorf("engine calls %v want %v", e.calls, []string{c.engineCall})
+			}
+			if c.engineCall != "StartFailures" && !reflect.DeepEqual(e.deadlines, []string{c.engineCall}) {
+				t.Errorf("calls with a deadline: %v", e.deadlines)
+			}
+		})
+	}
+}
+
+func TestWrappersForwardTheEngineError(t *testing.T) {
+	boom := errors.New("boom")
+	for _, c := range wrappers {
+		if !c.engineFails {
+			continue
+		}
+		t.Run(c.name, func(t *testing.T) {
+			a := started(&fakeEngine{err: boom}, fakeWindow{})
+			if _, err := c.call(a); !errors.Is(err, boom) {
+				t.Errorf("got %v", err)
+			}
+		})
+	}
+}
+
+func TestTerminalWrappersReachTheTerminals(t *testing.T) {
+	for _, c := range terminalWrappers {
+		t.Run(c.name, func(t *testing.T) {
+			a := started(&fakeEngine{}, fakeWindow{})
+			defer Shutdown(a)
+			err := c.call(a)
+			if errors.Is(err, errNotStarted) || (err != nil) != c.unknownFails {
+				t.Errorf("got %v, unknownFails=%v", err, c.unknownFails)
+			}
+		})
+	}
+}
+
 func TestShutdownClosesEngine(t *testing.T) {
 	e := &fakeEngine{}
-	a := started(e, fakeDialogs{})
+	a := started(e, fakeWindow{})
 	Shutdown(a)
 	if !e.closed {
 		t.Error("engine not closed")

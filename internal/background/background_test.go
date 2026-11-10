@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"claude-tower/internal/transcript"
 )
 
 var (
@@ -240,59 +242,8 @@ func TestIncrementalReadDoesNotReprocess(t *testing.T) {
 	if err := tr.Update(path); err != nil {
 		t.Fatal(err)
 	}
-	tr.mu.Lock()
-	off := tr.off
-	tr.mu.Unlock()
-	fi, _ := os.Stat(path)
-	if off != fi.Size() {
-		t.Errorf("offset=%d size=%d", off, fi.Size())
-	}
 	if got := ids(tr.agents); !reflect.DeepEqual(got, []string{"aaa"}) {
 		t.Errorf("the unchanged file was read again: %v", got)
-	}
-}
-
-func TestPartialTrailingLineWaitsForItsEnd(t *testing.T) {
-	path, tr := transcriptOf(t)
-	line := launchAgent("aaa", 0)
-	half := len(line) / 2
-	appendTo(t, path, line[:half])
-	if err := tr.Update(path); err != nil {
-		t.Fatal(err)
-	}
-	if got := agentsOf(tr, time.Time{}); got != 0 {
-		t.Fatalf("partial line counted: %d", got)
-	}
-	appendTo(t, path, line[half:])
-	if err := tr.Update(path); err != nil {
-		t.Fatal(err)
-	}
-	if got := agentsOf(tr, time.Time{}); got != 0 {
-		t.Fatalf("line without its newline counted: %d", got)
-	}
-	appendTo(t, path, "\n")
-	if err := tr.Update(path); err != nil {
-		t.Fatal(err)
-	}
-	if got := agentsOf(tr, time.Time{}); got != 1 {
-		t.Errorf("agents=%d want 1", got)
-	}
-}
-
-func TestPartialLineFollowedByCompleteLineInTheSameRead(t *testing.T) {
-	path, tr := transcriptOf(t)
-	line := launchAgent("aaa", 0)
-	half := len(line) / 2
-	appendTo(t, path, line[:half])
-	if err := tr.Update(path); err != nil {
-		t.Fatal(err)
-	}
-	appendTo(t, path, line[half:]+"\n"+launchAgent("bbb", time.Second)+"\n")
-	if err := tr.Update(path); err != nil {
-		t.Fatal(err)
-	}
-	if got := ids(tr.agents); !reflect.DeepEqual(got, []string{"aaa", "bbb"}) {
-		t.Errorf("agents=%v", got)
 	}
 }
 
@@ -327,7 +278,7 @@ func TestEndBeforeLaunchIsNotRevived(t *testing.T) {
 func TestEndedIdsAreBounded(t *testing.T) {
 	tr := NewTracker()
 	for i := 0; i < maxEnded+10; i++ {
-		tr.end(fmt.Sprintf("id%d", i))
+		tr.end(transcript.TaskAny, fmt.Sprintf("id%d", i))
 	}
 	if len(tr.ended) != maxEnded || len(tr.endedQ) != maxEnded {
 		t.Fatalf("ended=%d queue=%d want %d", len(tr.ended), len(tr.endedQ), maxEnded)
@@ -348,7 +299,7 @@ func TestEndedIdsAreBounded(t *testing.T) {
 func TestEndedIdsAreForgottenOldestFirstAfterWrapAround(t *testing.T) {
 	tr := NewTracker()
 	for i := 0; i < 2*maxEnded+5; i++ {
-		tr.end(fmt.Sprintf("id%d", i))
+		tr.end(transcript.TaskAny, fmt.Sprintf("id%d", i))
 	}
 	for i := 0; i < maxEnded+5; i++ {
 		if _, ok := tr.ended[fmt.Sprintf("id%d", i)]; ok {
@@ -361,48 +312,10 @@ func TestEndedIdsAreForgottenOldestFirstAfterWrapAround(t *testing.T) {
 		}
 	}
 	tr.reset()
-	tr.end("a")
-	tr.end("b")
+	tr.end(transcript.TaskAny, "a")
+	tr.end(transcript.TaskAny, "b")
 	if len(tr.ended) != 2 || len(tr.endedQ) != 2 || tr.endedAt != 0 {
 		t.Errorf("after reset: ended=%d queue=%d at=%d", len(tr.ended), len(tr.endedQ), tr.endedAt)
-	}
-}
-
-func TestReadBufferIsAllocatedOnDemandAndKept(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "s.jsonl")
-	if err := os.WriteFile(path, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	tr := NewTracker()
-	if err := tr.Update(path); err != nil {
-		t.Fatal(err)
-	}
-	if tr.buf != nil {
-		t.Fatal("buffer allocated for an empty transcript")
-	}
-	appendTo(t, path, launchAgent("aaa", 0)+"\n")
-	if err := tr.Update(path); err != nil {
-		t.Fatal(err)
-	}
-	if tr.buf == nil {
-		t.Fatal("buffer not allocated")
-	}
-	first := &tr.buf[0]
-	appendTo(t, path, launchAgent("bbb", 0)+"\n")
-	if err := tr.Update(path); err != nil {
-		t.Fatal(err)
-	}
-	if &tr.buf[0] != first {
-		t.Error("buffer reallocated")
-	}
-}
-
-func TestLineLargerThanTheReadChunk(t *testing.T) {
-	big := fmt.Sprintf(`{"type":"user","timestamp":%q,"note":%q,"toolUseResult":{"status":"async_launched","agentId":"aaa"}}`,
-		stamp(0), strings.Repeat("x", 3*readChunk))
-	_, tr := transcriptOf(t, big)
-	if got := agentsOf(tr, time.Time{}); got != 1 {
-		t.Errorf("agents=%d want 1", got)
 	}
 }
 
@@ -457,30 +370,6 @@ func TestMissingFileKeepsState(t *testing.T) {
 	}
 }
 
-func TestPrefilterSkipsDecoding(t *testing.T) {
-	skipped := []string{
-		`{"type":"user","message":"hello"}`,
-		`{"type":"user","toolUseResult":{"agentId":"aaa","status":"completed"}}`,
-		`{"type":"assistant","content":"background"}`,
-	}
-	for _, l := range skipped {
-		if mayCarryTask([]byte(l)) {
-			t.Errorf("decoded: %s", l)
-		}
-	}
-	decoded := []string{launchAgent("aaa", 0), launchShell("bone", 0), stop("aaa", "local_agent"), notification("aaa", "completed")}
-	for _, l := range decoded {
-		if !mayCarryTask([]byte(l)) {
-			t.Errorf("skipped: %s", l)
-		}
-	}
-	tr := NewTracker()
-	tr.apply([]byte(launchAgent("aaa", 0)))
-	if len(tr.agents) != 1 {
-		t.Errorf("agents=%v", tr.agents)
-	}
-}
-
 func TestOutputID(t *testing.T) {
 	cases := []struct {
 		target string
@@ -522,5 +411,14 @@ func TestDefaultFDReader(t *testing.T) {
 	}
 	if fds := r(1 << 30); len(fds) != 0 {
 		t.Errorf("unknown process: %v", fds)
+	}
+}
+
+func TestApplyDecodesTheLine(t *testing.T) {
+	tr := NewTracker()
+	tr.apply([]byte(launchAgent("aaa", 0)))
+	tr.apply([]byte(`{"type":"user","message":"hello"}`))
+	if got := ids(tr.agents); !reflect.DeepEqual(got, []string{"aaa"}) {
+		t.Errorf("agents=%v", got)
 	}
 }

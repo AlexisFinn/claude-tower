@@ -146,7 +146,7 @@ func (w *window) beforeClose(ctx context.Context) bool {
 
 func runApp() error {
 	w := newWindow()
-	a := app.New(w, w, os.Environ())
+	a := app.New(w, os.Environ())
 	return wails.Run(&options.App{
 		Title:            "Claude Tower",
 		Width:            1400,

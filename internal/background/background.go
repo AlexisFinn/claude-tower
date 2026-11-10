@@ -5,18 +5,15 @@
 package background
 
 import (
-	"bytes"
-	"encoding/json"
-	"errors"
-	"io"
 	"os"
 	"path"
-	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"claude-tower/internal/transcript"
 )
 
 const (
@@ -27,13 +24,9 @@ const (
 	// running.
 	maxAgentAge = 6 * time.Hour
 
-	readChunk = 256 << 10
-
 	// maxEnded bounds how many ended task ids are remembered.
 	maxEnded = 4096
 )
-
-var taskIDRe = regexp.MustCompile(`<task-id>\s*([^<\s]+)\s*</task-id>`)
 
 // Counts is the number of background agents and shells still running, or
 // Unknown.
@@ -89,11 +82,7 @@ type Query struct {
 // concurrent use.
 type Tracker struct {
 	mu      sync.Mutex
-	path    string
-	info    os.FileInfo
-	off     int64
-	partial []byte
-	buf     []byte
+	reader  transcript.Follower
 	agents  map[string]time.Time
 	shells  map[string]time.Time
 	ended   map[string]struct{}
@@ -107,7 +96,6 @@ func NewTracker() *Tracker {
 }
 
 func (t *Tracker) reset() {
-	t.info, t.off, t.partial = nil, 0, nil
 	clear(t.agents)
 	clear(t.shells)
 	clear(t.ended)
@@ -120,141 +108,30 @@ func (t *Tracker) reset() {
 func (t *Tracker) Update(transcriptPath string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	fh, err := os.Open(transcriptPath)
-	if err != nil {
-		return err
-	}
-	defer fh.Close()
-	info, err := fh.Stat()
-	if err != nil {
-		return err
-	}
-	if t.path != transcriptPath || (t.info != nil && !os.SameFile(t.info, info)) || info.Size() < t.off {
-		t.reset()
-	}
-	t.path, t.info = transcriptPath, info
-	if info.Size() == t.off {
-		return nil
-	}
-	if _, err := fh.Seek(t.off, io.SeekStart); err != nil {
-		return err
-	}
-	return t.consume(fh)
+	return t.reader.Read(transcriptPath, t.reset, t.apply)
 }
 
-func (t *Tracker) consume(r io.Reader) error {
-	if t.buf == nil {
-		t.buf = make([]byte, readChunk)
-	}
-	for {
-		n, err := r.Read(t.buf)
-		if n > 0 {
-			t.off += int64(n)
-			t.feed(t.buf[:n])
-		}
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-	}
-}
-
-// feed processes the complete lines of data, after the partial line kept from
-// the previous read, and keeps the trailing incomplete line.
-func (t *Tracker) feed(data []byte) {
-	for {
-		i := bytes.IndexByte(data, '\n')
-		if i < 0 {
-			t.partial = append(t.partial, data...)
-			return
-		}
-		line := data[:i]
-		if len(t.partial) > 0 {
-			line = append(t.partial, line...)
-			t.partial = nil
-		}
-		t.apply(line)
-		data = data[i+1:]
-	}
-}
-
-type toolResult struct {
-	Status           string `json:"status"`
-	AgentID          string `json:"agentId"`
-	TaskID           string `json:"task_id"`
-	TaskType         string `json:"task_type"`
-	BackgroundTaskID string `json:"backgroundTaskId"`
-}
-
-type record struct {
-	Type          string          `json:"type"`
-	Operation     string          `json:"operation"`
-	Content       string          `json:"content"`
-	Timestamp     string          `json:"timestamp"`
-	ToolUseResult json.RawMessage `json:"toolUseResult"`
-}
-
-var markers = [][]byte{
-	[]byte(`"async_launched"`),
-	[]byte(`"backgroundTaskId"`),
-	[]byte(`"task_type"`),
-	[]byte(`"queue-operation"`),
-}
-
-// mayCarryTask reports whether a line contains one of the strings that every
-// launch or end record holds.
-func mayCarryTask(line []byte) bool {
-	for _, m := range markers {
-		if bytes.Contains(line, m) {
-			return true
-		}
-	}
-	return false
-}
-
-// apply updates the state with one transcript line. Lines that cannot carry a
-// launch or an end are skipped without being decoded.
+// apply updates the state with one transcript line.
 func (t *Tracker) apply(line []byte) {
-	if !mayCarryTask(line) {
-		return
-	}
-	var rec record
-	var typeErr *json.UnmarshalTypeError
-	if err := json.Unmarshal(line, &rec); err != nil && !errors.As(err, &typeErr) {
-		return
-	}
-	switch {
-	case rec.Type == "queue-operation" && rec.Operation == "enqueue":
-		t.applyNotification(rec.Content)
-	case len(rec.ToolUseResult) > 0 && rec.ToolUseResult[0] == '{':
-		var res toolResult
-		if err := json.Unmarshal(rec.ToolUseResult, &res); err != nil && !errors.As(err, &typeErr) {
-			return
-		}
-		t.applyResult(res, parseTime(rec.Timestamp))
-	}
-}
-
-// applyNotification ends the tasks reported by the task notifications of a
-// queued message.
-func (t *Tracker) applyNotification(content string) {
-	for _, block := range strings.Split(content, "<task-notification>")[1:] {
-		if !strings.Contains(block, "<status>") {
-			continue
-		}
-		if m := taskIDRe.FindStringSubmatch(block); m != nil {
-			t.end(m[1])
+	for _, ev := range transcript.TaskEvents(line) {
+		if ev.Launched {
+			t.launch(ev)
+		} else {
+			t.end(ev.Kind, ev.ID)
 		}
 	}
 }
 
 // end forgets a task and remembers its id so that a launch recorded later in
-// the file does not revive it.
-func (t *Tracker) end(id string) {
-	delete(t.agents, id)
-	delete(t.shells, id)
+// the file does not revive it. An event that does not say the kind of the task
+// ends it whatever its kind.
+func (t *Tracker) end(kind transcript.TaskKind, id string) {
+	if kind != transcript.TaskShell {
+		delete(t.agents, id)
+	}
+	if kind != transcript.TaskAgent {
+		delete(t.shells, id)
+	}
 	t.remember(id)
 }
 
@@ -274,41 +151,18 @@ func (t *Tracker) remember(id string) {
 	t.ended[id] = struct{}{}
 }
 
-func (t *Tracker) applyResult(res toolResult, ts time.Time) {
-	if res.TaskID != "" {
-		switch res.TaskType {
-		case "local_agent":
-			delete(t.agents, res.TaskID)
-			t.remember(res.TaskID)
-		case "local_bash":
-			delete(t.shells, res.TaskID)
-			t.remember(res.TaskID)
-		}
-	}
-	if res.Status == "async_launched" && res.AgentID != "" {
-		t.launch(t.agents, res.AgentID, ts)
-	}
-	if res.BackgroundTaskID != "" {
-		t.launch(t.shells, res.BackgroundTaskID, ts)
-	}
-}
-
-// launch records the first launch of an id that has not ended.
-func (t *Tracker) launch(set map[string]time.Time, id string, ts time.Time) {
-	if _, done := t.ended[id]; done {
+// launch records the first launch of a task that has not ended.
+func (t *Tracker) launch(ev transcript.TaskEvent) {
+	if _, done := t.ended[ev.ID]; done {
 		return
 	}
-	if _, ok := set[id]; !ok {
-		set[id] = ts
+	set := t.agents
+	if ev.Kind == transcript.TaskShell {
+		set = t.shells
 	}
-}
-
-func parseTime(s string) time.Time {
-	ts, err := time.Parse(time.RFC3339Nano, s)
-	if err != nil {
-		return time.Time{}
+	if _, ok := set[ev.ID]; !ok {
+		set[ev.ID] = ev.At
 	}
-	return ts
 }
 
 // Counts returns the background work still running. The agents are the
