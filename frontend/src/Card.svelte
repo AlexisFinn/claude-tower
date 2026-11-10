@@ -1,8 +1,9 @@
 <script module lang="ts">
-  import type { CellSize } from './lib/bodySize'
+  import { FALLBACK_CELL_RATIO, type CellSize } from './lib/bodySize'
 
-  // The font is the same in every card, so the cell size is measured once.
-  let measuredCell: CellSize | null = null
+  // The font is the same in every card, so the cell size per pixel of font is measured once.
+  let measuredRatio: CellSize = FALLBACK_CELL_RATIO
+  let ratioMeasured = false
 </script>
 
 <script lang="ts">
@@ -13,7 +14,7 @@
   import Icon from './Icon.svelte'
   import StatePill from './StatePill.svelte'
   import { parseActivity } from './lib/activity'
-  import { fitBody, MAX_FONT, type GridSize } from './lib/bodySize'
+  import { fitBody, renderFont, type BodyFit, type GridSize } from './lib/bodySize'
   import { backgroundLabel, type BackgroundTasks } from './lib/cardText'
   import { frameClass } from './lib/frame'
   import type { Rect } from './lib/layout'
@@ -49,17 +50,15 @@
     onVisible,
   }: Props = $props()
 
-  // The cell size is measured at the largest font and scaled to the others.
-  const REF_FONT = MAX_FONT
   const FONT_FAMILY = 'ui-monospace, "SFMono-Regular", Menlo, "DejaVu Sans Mono", monospace'
-  const FALLBACK_CELL: CellSize = { width: 6.6, height: 13 }
 
   let root: HTMLDivElement
   let host: HTMLDivElement | undefined = $state()
   let bodyWidth = $state(0)
   let bodyHeight = $state(0)
   let term = $state.raw<Terminal | null>(null)
-  let cell = $state.raw<CellSize | null>(measuredCell)
+  let fit = $state.raw<BodyFit | null>(null)
+  let remeasure = $state(0)
   let lastKey = ''
 
   const activity = $derived(parseActivity(card.Activity))
@@ -68,20 +67,38 @@
   )
   const backgroundText = $derived(backgroundLabel(background))
   const paneCols = $derived(screen && screen.Width > 0 ? screen.Width : null)
-  const fit = $derived(
-    term !== null && cell !== null && bodyWidth > 0 && bodyHeight > 0
-      ? fitBody(paneCols, bodyWidth, bodyHeight, cell, REF_FONT)
-      : null,
-  )
 
-  function measure(t: Terminal): void {
-    const screenEl = t.element?.querySelector<HTMLElement>('.xterm-screen')
-    if (!screenEl || screenEl.clientWidth === 0 || screenEl.clientHeight === 0) {
-      cell = FALLBACK_CELL
-      return
+  function screenElement(t: Terminal): HTMLElement | null {
+    return t.element?.querySelector<HTMLElement>('.xterm-screen') ?? null
+  }
+
+  /** Returns the size in pixels of the rendered grid, before the scale, or null when it is not laid out. */
+  function naturalSize(t: Terminal): CellSize | null {
+    const el = screenElement(t)
+    if (!el || el.clientWidth === 0 || el.clientHeight === 0) return null
+    return { width: el.clientWidth, height: el.clientHeight }
+  }
+
+  /** Renders the terminal at a comfortable font, then scales it down to fill the body width. */
+  function layout(t: Terminal, cols: number | null, width: number, height: number): BodyFit {
+    const font = renderFont(cols, width, measuredRatio)
+    if (t.options.fontSize !== font) t.options.fontSize = font
+    const grid = naturalSize(t)
+    const cell = grid
+      ? { width: grid.width / t.cols, height: grid.height / t.rows }
+      : { width: measuredRatio.width * font, height: measuredRatio.height * font }
+    if (grid && !ratioMeasured) {
+      ratioMeasured = true
+      measuredRatio = { width: cell.width / font, height: cell.height / font }
     }
-    measuredCell = { width: screenEl.clientWidth / t.cols, height: screenEl.clientHeight / t.rows }
-    cell = measuredCell
+    let naturalWidth: number | null = null
+    if (cols !== null) {
+      t.resize(cols, t.rows)
+      naturalWidth = naturalSize(t)?.width ?? null
+    }
+    const next = fitBody(cols, width, height, font, cell, naturalWidth)
+    t.resize(next.cols, next.rows)
+    return next
   }
 
   $effect(() => {
@@ -89,7 +106,7 @@
     const t = new Terminal({
       disableStdin: true,
       scrollback: 0,
-      fontSize: REF_FONT,
+      fontSize: 11,
       fontFamily: FONT_FAMILY,
       lineHeight: 1,
       cursorInactiveStyle: 'none',
@@ -100,14 +117,15 @@
     t.unicode.activeVersion = '11'
     t.open(host)
     t.write('\x1b[?25l')
-    const frame = requestAnimationFrame(() => {
-      if (cell === null) measure(t)
-    })
+    const screenEl = screenElement(t)
+    const observer = new ResizeObserver(() => remeasure++)
+    if (screenEl) observer.observe(screenEl)
     lastKey = ''
     term = t
     return () => {
-      cancelAnimationFrame(frame)
+      observer.disconnect()
       term = null
+      fit = null
       t.dispose()
     }
   })
@@ -124,11 +142,14 @@
     }
   })
 
+  // The layout is idempotent: remeasure only fires again when the rendered size
+  // changes, which a second pass at the same font and grid does not do.
   $effect(() => {
-    if (!term || !fit) return
-    if (term.options.fontSize !== fit.fontSize) term.options.fontSize = fit.fontSize
-    term.resize(fit.cols, fit.rows)
-    onMeasure(card.PID, { cols: fit.cols, rows: fit.rows })
+    void remeasure
+    if (!term || bodyWidth <= 0 || bodyHeight <= 0) return
+    const next = layout(term, paneCols, bodyWidth, bodyHeight)
+    fit = next
+    onMeasure(card.PID, { cols: next.cols, rows: next.rows })
   })
 
   $effect(() => {
@@ -200,7 +221,12 @@
   {#if card.InTmux}
     <div class="screen">
       <div class="fill" bind:clientWidth={bodyWidth} bind:clientHeight={bodyHeight}>
-        <div class="term" bind:this={host}></div>
+        <div
+          class="term"
+          class:ready={fit !== null}
+          style:transform="scale({fit?.scale ?? 1})"
+          bind:this={host}
+        ></div>
       </div>
       {#if unavailable}
         <div class="stale" role="status">
@@ -396,9 +422,22 @@
     overflow: hidden;
   }
 
+  /* The terminal keeps its natural layout size and is scaled down from the top left, so it is
+     taken out of the flow and clipped by .fill. */
   .term {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: max-content;
     pointer-events: none;
     user-select: none;
+    visibility: hidden;
+    transform-origin: top left;
+    will-change: transform;
+  }
+
+  .term.ready {
+    visibility: visible;
   }
 
   .stale {
