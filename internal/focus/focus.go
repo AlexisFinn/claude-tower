@@ -5,7 +5,6 @@ package focus
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"runtime"
 	"strconv"
@@ -54,28 +53,75 @@ func Raise(pids []int) error {
 	return raiseX11(pids)
 }
 
-// firstAppPID returns the first pid whose executable lies in an application
-// bundle, which is what owns windows on macOS.
-func firstAppPID(ctx context.Context, pids []int, run tmux.Runner) (int, bool) {
+// appProcess is a process whose executable lies in an application bundle.
+type appProcess struct {
+	pid    int
+	bundle string // path of the outermost bundle, such as /Applications/iTerm.app
+}
+
+// appProcesses returns, in the order of pids, the processes whose executable
+// lies in an application bundle. Several can belong to one terminal: a
+// helper, such as the server of iTerm2, runs from the bundle of its
+// application without owning any window.
+func appProcesses(ctx context.Context, pids []int, run tmux.Runner) []appProcess {
+	var apps []appProcess
 	for _, pid := range pids {
 		out, err := run(ctx, nil, "ps", "-o", "comm=", "-p", strconv.Itoa(pid))
-		if err == nil && strings.Contains(string(out), ".app/") {
-			return pid, true
+		if err != nil {
+			continue
+		}
+		comm := strings.TrimSpace(string(out))
+		if i := strings.Index(comm, ".app/"); i >= 0 {
+			apps = append(apps, appProcess{pid: pid, bundle: comm[:i+len(".app")]})
 		}
 	}
-	return 0, false
+	return apps
 }
 
-func osascriptArgs(pid int) []string {
-	return []string{"-e", fmt.Sprintf(
-		`tell application "System Events" to set frontmost of (first process whose unix id is %d) to true`, pid)}
+// raiseScript brings to the foreground the first process of its arguments
+// that System Events knows as an application process, and prints "raised";
+// it prints "none" when it knows none of them.
+var raiseScript = []string{
+	"on run argv",
+	`tell application "System Events"`,
+	"repeat with p in argv",
+	"set found to (every process whose unix id is ((contents of p) as integer))",
+	"if found is not {} then",
+	"set frontmost of (item 1 of found) to true",
+	`return "raised"`,
+	"end if",
+	"end repeat",
+	"end tell",
+	`return "none"`,
+	"end run",
 }
 
+func osascriptArgs(apps []appProcess) []string {
+	args := make([]string, 0, 2*len(raiseScript)+len(apps))
+	for _, line := range raiseScript {
+		args = append(args, "-e", line)
+	}
+	for _, a := range apps {
+		args = append(args, strconv.Itoa(a.pid))
+	}
+	return args
+}
+
+// raiseMacOS brings to the foreground the nearest process of pids that is an
+// application process, and otherwise activates the application whose bundle
+// holds the nearest of them.
 func raiseMacOS(ctx context.Context, pids []int, run tmux.Runner) error {
-	pid, ok := firstAppPID(ctx, pids, run)
-	if !ok {
+	apps := appProcesses(ctx, pids, run)
+	if len(apps) == 0 {
 		return errors.New("aucune fenêtre de terminal trouvée pour cette session")
 	}
-	_, err := run(ctx, nil, "osascript", osascriptArgs(pid)...)
+	out, err := run(ctx, nil, "osascript", osascriptArgs(apps)...)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(out)) == "raised" {
+		return nil
+	}
+	_, err = run(ctx, nil, "open", "-a", apps[0].bundle)
 	return err
 }
