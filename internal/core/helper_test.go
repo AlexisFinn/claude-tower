@@ -33,6 +33,7 @@ type fakeTmux struct {
 	shell   string            // output of the login shell
 	shells  int               // number of runs of the login shell
 	failing map[string]bool
+	others  [][]string // calls of programs other than tmux and the login shell
 }
 
 func (f *fakeTmux) run(_ context.Context, stdin io.Reader, _ string, args ...string) ([]byte, error) {
@@ -46,6 +47,9 @@ func (f *fakeTmux) run(_ context.Context, stdin io.Reader, _ string, args ...str
 			f.mu.Unlock()
 			return []byte(f.shell), nil
 		}
+		f.mu.Lock()
+		f.others = append(f.others, append([]string(nil), args...))
+		f.mu.Unlock()
 		return nil, nil
 	}
 	var in string
@@ -123,6 +127,7 @@ type env struct {
 	privSock string
 	hosting  *hosting.Hosting
 	tree     locate.Tree
+	attached locate.Attachments
 	alive    map[int]bool
 	raised   [][]int
 	raiseErr error
@@ -183,9 +188,12 @@ func (e *env) core(opts ...func(*Options)) *Core {
 		Bin:           "tmux",
 		Run:           e.fake.run,
 		ReadTree:      func(context.Context, tmux.Runner) (locate.Tree, error) { return e.tree, nil },
-		Raise:         func(pids []int) error { e.raised = append(e.raised, pids); return e.raiseErr },
-		Supported:     func() bool { return e.supports },
-		Now:           func() time.Time { return testNow },
+		ReadAttachments: func(context.Context, tmux.Runner) (locate.Attachments, error) {
+			return e.attached, nil
+		},
+		Raise:     func(pids []int) error { e.raised = append(e.raised, pids); return e.raiseErr },
+		Supported: func() bool { return e.supports },
+		Now:       func() time.Time { return testNow },
 	}
 	o.Registry.Dir = e.cfgDir
 	o.Registry.Alive = func(pid int, _ string) bool { return e.alive[pid] }

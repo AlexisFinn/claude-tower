@@ -87,6 +87,68 @@ func sessionName(dir string) string {
 	return name
 }
 
+// ErrSessionExists reports that a session of the requested name already
+// exists in the private server.
+var ErrSessionExists = errors.New("la session existe déjà")
+
+// NewAttachSession starts `claude attach id` in the session AttachPrefix+id
+// of the private server, in directory dir, with env as its environment. Only
+// the claude binary of claudeCommand is used: its arguments are for new
+// sessions. It fails with ErrSessionExists when that session runs already.
+func (h *Hosting) NewAttachSession(ctx context.Context, dir, id string, env []string) (tmux.Pane, error) {
+	if h.Self == "" {
+		return tmux.Pane{}, errors.New("chemin de claude-tower inconnu")
+	}
+	if id == "" || strings.ContainsAny(id, " \t\n/") {
+		return tmux.Pane{}, fmt.Errorf("identifiant de session invalide : %q", id)
+	}
+	if err := h.EnsureConfig(ctx); err != nil {
+		return tmux.Pane{}, err
+	}
+	argv, err := h.resolveClaude(ctx, env)
+	if err != nil {
+		return tmux.Pane{}, err
+	}
+	srv, err := h.server()
+	if err != nil {
+		return tmux.Pane{}, err
+	}
+	envFile, err := h.WriteEnvFile(env)
+	if err != nil {
+		return tmux.Pane{}, err
+	}
+	pane, err := h.startSession(ctx, srv, dir, tmux.AttachPrefix+id, false, []string{h.Self, "exec-env", envFile, "--", argv[0], "attach", id})
+	if err != nil {
+		os.Remove(envFile)
+		return tmux.Pane{}, err
+	}
+	return pane, nil
+}
+
+// StopBackground stops the background session id of Claude Code with
+// `claude stop`, which keeps its conversation. The command runs through
+// exec-env with env, so that it reaches the daemon of the configuration
+// directory the sessions use.
+func (h *Hosting) StopBackground(ctx context.Context, id string, env []string) error {
+	if h.Self == "" {
+		return errors.New("chemin de claude-tower inconnu")
+	}
+	argv, err := h.resolveClaude(ctx, env)
+	if err != nil {
+		return err
+	}
+	envFile, err := h.WriteEnvFile(env)
+	if err != nil {
+		return err
+	}
+	out, err := h.shellRun()(ctx, nil, h.Self, "exec-env", envFile, "--", argv[0], "stop", id)
+	if err != nil {
+		os.Remove(envFile)
+		return fmt.Errorf("claude stop %s : %w %s", id, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // NewSession starts Claude Code with args in a new session of the private
 // server, in directory dir, with env as its environment. The environment
 // travels in a file rather than in the arguments, which other users can read.
@@ -109,7 +171,7 @@ func (h *Hosting) NewSession(ctx context.Context, dir string, args []string, env
 	if err != nil {
 		return tmux.Pane{}, err
 	}
-	pane, err := h.startSession(ctx, srv, dir, append([]string{h.Self, "exec-env", envFile, "--"}, append(argv, args...)...))
+	pane, err := h.startSession(ctx, srv, dir, sessionName(dir), true, append([]string{h.Self, "exec-env", envFile, "--"}, append(argv, args...)...))
 	if err != nil {
 		os.Remove(envFile)
 		return tmux.Pane{}, err
@@ -117,7 +179,9 @@ func (h *Hosting) NewSession(ctx context.Context, dir string, args []string, env
 	return pane, nil
 }
 
-func (h *Hosting) startSession(ctx context.Context, srv tmux.Server, dir string, command []string) (tmux.Pane, error) {
+// startSession creates a session called name running command. With unique, a
+// taken name gets a numeric suffix; without, it fails with ErrSessionExists.
+func (h *Hosting) startSession(ctx context.Context, srv tmux.Server, dir, name string, unique bool, command []string) (tmux.Pane, error) {
 	confDir, err := h.configDir()
 	if err != nil {
 		return tmux.Pane{}, err
@@ -127,7 +191,6 @@ func (h *Hosting) startSession(ctx context.Context, srv tmux.Server, dir string,
 	if dir != "" {
 		base = append(base, "-c", dir)
 	}
-	name := sessionName(dir)
 	var out []byte
 	for attempt := 1; ; attempt++ {
 		candidate := name
@@ -138,7 +201,11 @@ func (h *Hosting) startSession(ctx context.Context, srv tmux.Server, dir string,
 		if out, err = srv.Exec(ctx, nil, args...); err == nil {
 			break
 		}
-		if !strings.Contains(err.Error(), "duplicate session") || attempt >= maxNameAttempts {
+		duplicate := strings.Contains(err.Error(), "duplicate session")
+		if duplicate && !unique {
+			return tmux.Pane{}, ErrSessionExists
+		}
+		if !duplicate || attempt >= maxNameAttempts {
 			return tmux.Pane{}, fmt.Errorf("new-session : %w", err)
 		}
 	}

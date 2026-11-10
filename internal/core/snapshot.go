@@ -24,6 +24,10 @@ type snapshot struct {
 	privateOK   bool            // the private server answered
 	privateGone bool            // the private server is not running
 	privateIDs  map[string]bool // IDs of every pane the private server listed
+	// listedPrivate holds every pane the private server listed.
+	listedPrivate []tmux.Pane
+	// background holds the short id of each background session, keyed by PID.
+	background map[int]string
 }
 
 // serverState is what one server reported.
@@ -52,10 +56,14 @@ func (c *Core) refresh(ctx context.Context) (snapshot, error) {
 	if err != nil {
 		return snapshot{}, err
 	}
+	// Without the attach clients, background sessions fall back to the
+	// attach sessions of the private server.
+	attached, _ := c.opts.ReadAttachments(ctx, c.opts.Run)
 	var panes []tmux.Pane
 	clients := map[string][]tmux.Client{}
 	privateOK, privateGone := false, false
 	privateIDs := map[string]bool{}
+	var listedPrivate []tmux.Pane
 	for _, st := range states {
 		if !st.ok {
 			if st.socket == private {
@@ -68,20 +76,23 @@ func (c *Core) refresh(ctx context.Context) (snapshot, error) {
 			for _, p := range st.panes {
 				privateIDs[p.ID] = true
 			}
+			listedPrivate = st.panes
 		}
 		panes = append(panes, st.panes...)
 		clients[st.socket] = st.clients
 	}
 	snap := snapshot{
-		sessions:    sessions,
-		panes:       locate.Match(sessions, panes, tree),
-		clients:     clients,
-		tree:        tree,
-		private:     private,
-		privateOK:   privateOK,
-		privateGone: privateGone,
-		privateIDs:  privateIDs,
+		sessions:      sessions,
+		panes:         locate.Match(sessions, panes, tree),
+		clients:       clients,
+		tree:          tree,
+		private:       private,
+		privateOK:     privateOK,
+		privateGone:   privateGone,
+		privateIDs:    privateIDs,
+		listedPrivate: listedPrivate,
 	}
+	snap.background = matchBackground(sessions, panes, tree, attached, private, snap.panes)
 	// A pane whose PID is already a session's key would give two cards the
 	// same PID: it gets none.
 	for _, p := range pendingPanes(panes, snap.panes, private) {

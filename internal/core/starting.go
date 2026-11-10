@@ -37,7 +37,7 @@ type launch struct {
 }
 
 // pendingPanes returns the panes of the private server that host no
-// registered session, ordered by creation time, then pane ID.
+// registered session, attach sessions aside, ordered by creation time, then pane ID.
 func pendingPanes(panes []tmux.Pane, matched map[int]tmux.Pane, private string) []tmux.Pane {
 	if private == "" {
 		return nil
@@ -50,7 +50,7 @@ func pendingPanes(panes []tmux.Pane, matched map[int]tmux.Pane, private string) 
 	}
 	var out []tmux.Pane
 	for _, p := range panes {
-		if p.Server.Socket == private && !used[p.ID] {
+		if p.Server.Socket == private && !used[p.ID] && !isAttachPane(p, private) {
 			out = append(out, p)
 		}
 	}

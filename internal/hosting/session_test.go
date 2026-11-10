@@ -388,3 +388,56 @@ func TestLookupClaudeRefusesRelativeShellOutput(t *testing.T) {
 		t.Errorf("shell not consulted: %v", rec.calls)
 	}
 }
+
+func TestNewAttachSessionCommand(t *testing.T) {
+	rec := sessionRecorder(0)
+	h := newHosting(t, rec)
+	claude := writeExecutable(t, t.TempDir(), "claude")
+	writeConfig(t, h, fmt.Sprintf(`{"claudeCommand":[%q,"--base"]}`, claude))
+	if _, err := h.NewAttachSession(context.Background(), "/work/proj", "504d303c", []string{"PATH=/bin"}); err != nil {
+		t.Fatal(err)
+	}
+	call := newSessionCall(rec)
+	i := indexOf(call, "-s")
+	if i < 0 || call[i+1] != tmux.AttachPrefix+"504d303c" {
+		t.Fatalf("name: %q", call)
+	}
+	command := call[i+3:]
+	if len(command) != 7 || command[1] != "exec-env" || !reflect.DeepEqual(command[4:], []string{claude, "attach", "504d303c"}) {
+		t.Errorf("command: %q", command)
+	}
+}
+
+func TestNewAttachSessionDoesNotRename(t *testing.T) {
+	rec := sessionRecorder(1)
+	h := newHosting(t, rec)
+	h.Env = []string{"PATH=" + filepath.Dir(writeExecutable(t, t.TempDir(), "claude"))}
+	if _, err := h.NewAttachSession(context.Background(), "/work", "ab12", h.Env); !errors.Is(err, ErrSessionExists) {
+		t.Errorf("err: %v", err)
+	}
+	if _, err := h.NewAttachSession(context.Background(), "/work", "a b", h.Env); err == nil {
+		t.Error("invalid id accepted")
+	}
+}
+
+func TestStopBackground(t *testing.T) {
+	rec := sessionRecorder(0)
+	h := newHosting(t, rec)
+	claude := writeExecutable(t, t.TempDir(), "claude")
+	writeConfig(t, h, fmt.Sprintf(`{"claudeCommand":[%q,"--base"]}`, claude))
+	if err := h.StopBackground(context.Background(), "504d303c", []string{"CLAUDE_CONFIG_DIR=/c"}); err != nil {
+		t.Fatal(err)
+	}
+	var call []string
+	for _, c := range rec.calls {
+		if c.name == "/opt/claude-tower" {
+			call = c.args
+		}
+	}
+	if len(call) != 6 || call[0] != "exec-env" || !reflect.DeepEqual(call[2:], []string{"--", claude, "stop", "504d303c"}) {
+		t.Fatalf("call: %q (calls %+v)", call, rec.calls)
+	}
+	if data, err := os.ReadFile(call[1]); err != nil || string(data) != "CLAUDE_CONFIG_DIR=/c\x00" {
+		t.Errorf("env file: %q %v", data, err)
+	}
+}

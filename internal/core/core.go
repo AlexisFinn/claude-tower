@@ -42,6 +42,9 @@ type Options struct {
 	Run tmux.Runner
 	// ReadTree reads the process tree. Default: locate.ReadTree.
 	ReadTree func(context.Context, tmux.Runner) (locate.Tree, error)
+	// ReadAttachments lists the `claude attach` clients. Default:
+	// locate.ReadAttachments.
+	ReadAttachments func(context.Context, tmux.Runner) (locate.Attachments, error)
 	// ReadFDs lists the targets of the open file descriptors of a process, to
 	// find the background shells still running. Default:
 	// background.DefaultFDReader, nil on systems without /proc.
@@ -66,6 +69,9 @@ type Core struct {
 	launchSeq uint64
 	failures  []StartFailure
 
+	attaching   map[string]bool      // background ids whose attach session is being created
+	attachTried map[string]time.Time // last attach attempt, per background id
+
 	bgMu     sync.Mutex
 	trackers map[string]*background.Tracker // keyed by session ID
 }
@@ -89,6 +95,9 @@ func New(opts Options) (*Core, error) {
 	}
 	if opts.ReadTree == nil {
 		opts.ReadTree = locate.ReadTree
+	}
+	if opts.ReadAttachments == nil {
+		opts.ReadAttachments = locate.ReadAttachments
 	}
 	if opts.ReadFDs == nil {
 		opts.ReadFDs = background.DefaultFDReader()
@@ -116,6 +125,9 @@ func New(opts Options) (*Core, error) {
 		finder:   transcript.NewFinder(opts.Registry.Dir),
 		trackers: map[string]*background.Tracker{},
 		launches: map[string]*launch{},
+
+		attaching:   map[string]bool{},
+		attachTried: map[string]time.Time{},
 	}, nil
 }
 

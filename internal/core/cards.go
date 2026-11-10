@@ -19,6 +19,7 @@ type Card struct {
 	Activity     string
 	InTmux       bool
 	Private      bool // the session runs in the private server
+	Detached     bool // the session runs in the background daemon of Claude Code
 	Attached     bool // a client of the user shows the session
 	CanPrompt    bool
 	PromptReason string // why CanPrompt is false
@@ -61,6 +62,7 @@ func (c *Core) Cards(ctx context.Context) ([]Card, error) {
 			card.Private = snap.private != "" && pane.Server.Socket == snap.private
 			card.Attached = pane.Attached(snap.clients[pane.Server.Socket])
 		}
+		_, card.Detached = snap.background[s.PID]
 		card.PromptReason = PromptReason(inTmux, s)
 		card.CanPrompt = card.PromptReason == ""
 		cards = append(cards, card)
@@ -68,6 +70,7 @@ func (c *Core) Cards(ctx context.Context) ([]Card, error) {
 	for _, p := range snap.pending {
 		cards = append(cards, c.pendingCard(p, len(cards), now, snap.clients[p.Server.Socket]))
 	}
+	c.syncAttachments(snap)
 	return cards, nil
 }
 

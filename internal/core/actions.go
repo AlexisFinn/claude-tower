@@ -125,10 +125,18 @@ func (c *Core) NewSession(ctx context.Context, dir string) error {
 	return nil
 }
 
-// Kill stops a session of the private server.
+// Kill stops a session of the private server, or a background session of
+// Claude Code with `claude stop`.
 func (c *Core) Kill(ctx context.Context, pid int) error {
 	if c.opts.Hosting == nil {
 		return errors.New("hébergement indisponible")
+	}
+	c.mu.Lock()
+	id, background := c.snap.background[pid]
+	c.mu.Unlock()
+	if background {
+		h := c.opts.Hosting
+		return h.StopBackground(ctx, id, h.NewSessionEnv(ctx))
 	}
 	pane, err := c.paneOfSession(pid)
 	if err != nil {

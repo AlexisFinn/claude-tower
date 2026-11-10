@@ -12,6 +12,11 @@ import (
 // embedded terminal. Such sessions are hidden from the pane and client lists.
 const ViewPrefix = "claude-tower-view-"
 
+// AttachPrefix starts the name of every session of the private server that
+// runs `claude attach <id>` to show a background session of Claude Code; the
+// id follows the prefix.
+const AttachPrefix = "claude-tower-bg-"
+
 // Pane is one tmux pane.
 type Pane struct {
 	Server        Server
