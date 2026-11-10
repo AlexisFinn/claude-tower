@@ -72,7 +72,8 @@ export function displayScale(font: number, bodyWidth: number, naturalWidth: numb
  * estimate). With a pane width the grid has
  * as many columns as the pane and the scale makes them fill bodyWidth, up to
  * MAX_DISPLAY_FONT. Without one, the columns are those that fill bodyWidth at
- * DEFAULT_DISPLAY_FONT. Rows are those that fit bodyHeight at that scale.
+ * DEFAULT_DISPLAY_FONT. Rows are those that fit bodyHeight at that scale, at
+ * most paneRows when it is known.
  */
 export function fitBody(
   paneCols: number | null,
@@ -81,6 +82,7 @@ export function fitBody(
   font: number,
   cell: CellSize,
   naturalWidth: number | null,
+  paneRows: number | null = null,
 ): BodyFit {
   const natural = paneCols === null ? null : (naturalWidth ?? paneCols * cell.width)
   const scale = displayScale(font, bodyWidth, natural)
@@ -88,5 +90,8 @@ export function fitBody(
     width: cell.width * scale,
     height: cell.height * scale,
   })
-  return { scale, cols: paneCols ?? grid.cols, rows: grid.rows }
+  // The pane never has more rows than its height: capping them bounds the
+  // rendered layer when the scale is tiny.
+  const rows = paneRows !== null && paneRows > 0 ? Math.min(grid.rows, paneRows) : grid.rows
+  return { scale, cols: paneCols ?? grid.cols, rows }
 }

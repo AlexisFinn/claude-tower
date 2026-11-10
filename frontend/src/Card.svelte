@@ -67,6 +67,7 @@
   )
   const backgroundText = $derived(backgroundLabel(background))
   const paneCols = $derived(screen && screen.Width > 0 ? screen.Width : null)
+  const paneRows = $derived(screen && screen.Height > 0 ? screen.Height : null)
 
   function screenElement(t: Terminal): HTMLElement | null {
     return t.element?.querySelector<HTMLElement>('.xterm-screen') ?? null
@@ -80,7 +81,7 @@
   }
 
   /** Renders the terminal at a comfortable font, then scales it down to fill the body width. */
-  function layout(t: Terminal, cols: number | null, width: number, height: number): BodyFit {
+  function layout(t: Terminal, cols: number | null, rows: number | null, width: number, height: number): BodyFit {
     const font = renderFont(cols, width, measuredRatio)
     if (t.options.fontSize !== font) t.options.fontSize = font
     const grid = naturalSize(t)
@@ -96,7 +97,7 @@
       t.resize(cols, t.rows)
       naturalWidth = naturalSize(t)?.width ?? null
     }
-    const next = fitBody(cols, width, height, font, cell, naturalWidth)
+    const next = fitBody(cols, width, height, font, cell, naturalWidth, rows)
     t.resize(next.cols, next.rows)
     return next
   }
@@ -147,7 +148,7 @@
   $effect(() => {
     void remeasure
     if (!term || bodyWidth <= 0 || bodyHeight <= 0) return
-    const next = layout(term, paneCols, bodyWidth, bodyHeight)
+    const next = layout(term, paneCols, paneRows, bodyWidth, bodyHeight)
     fit = next
     onMeasure(card.PID, { cols: next.cols, rows: next.rows })
   })

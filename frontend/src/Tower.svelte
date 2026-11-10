@@ -333,6 +333,7 @@
   <PromptBar
     bind:this={promptBar}
     card={selectedCard}
+    dropBlocked={fullscreen !== null || helpOpen || confirmKill !== null}
     onSent={() => refresher.kick()}
     onLocate={locateSelected}
   />

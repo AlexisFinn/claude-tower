@@ -117,4 +117,11 @@ describe('fitBody', () => {
     expect(fitBody(80, 528, 3, 20, cell, 960).rows).toBe(1)
     expect(fitBody(null, 1, 3, 22, cell, null)).toMatchObject({ cols: 1, rows: 1 })
   })
+
+  it('caps the rows at the pane height', () => {
+    const cell = { width: 6, height: 12 }
+    expect(fitBody(212, 300, 1000, 10, cell, 1272, 50).rows).toBe(50)
+    expect(fitBody(212, 300, 100, 10, cell, 1272, 50).rows).toBeLessThan(50)
+    expect(fitBody(212, 300, 1000, 10, cell, 1272, null).rows).toBeGreaterThan(50)
+  })
 })

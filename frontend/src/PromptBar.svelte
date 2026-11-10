@@ -19,9 +19,10 @@
 
   let {
     card,
+    dropBlocked = false,
     onSent,
     onLocate,
-  }: { card: core.Card | null; onSent: () => void; onLocate: () => void } = $props()
+  }: { card: core.Card | null; dropBlocked?: boolean; onSent: () => void; onLocate: () => void } = $props()
 
   const MAX_HEIGHT = 172
 
@@ -75,7 +76,7 @@
   }
 
   function onDragOver(e: DragEvent): void {
-    if (!carriesFiles(e) || availability.disabled) return
+    if (!carriesFiles(e) || availability.disabled || dropBlocked) return
     dragging = true
     clearTimeout(dragTimer)
     dragTimer = setTimeout(stopDragging, 400)
@@ -86,7 +87,11 @@
   }
 
   onMount(() => {
-    OnFileDrop((_x, _y, paths) => attach(paths), false)
+    // A drop while a dialog or the fullscreen terminal covers the bar would add
+    // files the user cannot see.
+    OnFileDrop((_x, _y, paths) => {
+      if (!dropBlocked) attach(paths)
+    }, false)
     window.addEventListener('dragover', onDragOver)
     window.addEventListener('dragleave', onDragLeave)
     window.addEventListener('drop', stopDragging)
