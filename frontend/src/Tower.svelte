@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { Cards, Focus, Kill, NewSession, Screen, StartFailures } from '../wailsjs/go/app/App'
+  import { Cards, FitSession, Focus, Kill, NewSession, Screen, StartFailures } from '../wailsjs/go/app/App'
   import type { core } from '../wailsjs/go/models'
   import AppBar from './AppBar.svelte'
   import Card from './Card.svelte'
@@ -44,6 +44,7 @@
   let promptBar: PromptBar
 
   const sizes = new Map<number, GridSize>()
+  const fits = new Map<number, GridSize>()
   const visible = new Set<number>()
   const failures = createFailureTracker()
   const notifier = createToasts((list) => (toasts = list))
@@ -72,6 +73,26 @@
     const known = sizes.get(pid)
     sizes.set(pid, size)
     if (!sameSize(known, size)) refresher.kick()
+  }
+
+  function onFit(pid: number, size: GridSize | null): void {
+    if (size === null) fits.delete(pid)
+    else fits.set(pid, size)
+  }
+
+  /**
+   * Resizes a session the application launched to the size its card wants,
+   * when its last screen has another size. The engine leaves alone a session
+   * that a client shows, such as the fullscreen view.
+   */
+  async function fit(card: core.Card, screen: core.Screen): Promise<void> {
+    const size = fits.get(card.PID)
+    if (!size || card.Attached || (screen.Width === size.cols && screen.Height === size.rows)) return
+    try {
+      await FitSession(card.PID, size.cols, size.rows)
+    } catch {
+      // The next screen still has the old size, so the next cycle tries again.
+    }
   }
 
   function onVisible(pid: number, isVisible: boolean): void {
@@ -104,8 +125,10 @@
       if (!card.InTmux || !size || !visible.has(card.PID)) continue
       if (fullscreen !== null || document.hidden || typing.active()) return
       try {
-        screens = { ...screens, [card.PID]: await Screen(card.PID, size.rows) }
+        const screen = await Screen(card.PID, size.rows)
+        screens = { ...screens, [card.PID]: screen }
         failures.succeed(card.PID)
+        if (fullscreen === null) await fit(card, screen)
       } catch {
         failures.fail(card.PID)
       }
@@ -324,6 +347,7 @@
                 onFullscreen={openFullscreenOf}
                 onKill={askKillOf}
                 {onMeasure}
+                {onFit}
                 {onVisible}
               />
             {/if}

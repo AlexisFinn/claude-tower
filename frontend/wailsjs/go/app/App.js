@@ -14,6 +14,10 @@ export function CloseTerminal(arg1) {
   return window['go']['app']['App']['CloseTerminal'](arg1);
 }
 
+export function FitSession(arg1, arg2, arg3) {
+  return window['go']['app']['App']['FitSession'](arg1, arg2, arg3);
+}
+
 export function Focus(arg1) {
   return window['go']['app']['App']['Focus'](arg1);
 }

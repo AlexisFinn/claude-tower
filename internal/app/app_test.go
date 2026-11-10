@@ -28,9 +28,10 @@ func (f *fakeEngine) NewSession(_ context.Context, dir string) error {
 	f.newSessions = append(f.newSessions, dir)
 	return nil
 }
-func (f *fakeEngine) Kill(context.Context, int) error { return nil }
-func (f *fakeEngine) PaneOf(int) (tmux.Pane, bool)    { return tmux.Pane{}, false }
-func (f *fakeEngine) Sweep(context.Context)           {}
+func (f *fakeEngine) Kill(context.Context, int) error          { return nil }
+func (f *fakeEngine) Fit(context.Context, int, int, int) error { return nil }
+func (f *fakeEngine) PaneOf(int) (tmux.Pane, bool)             { return tmux.Pane{}, false }
+func (f *fakeEngine) Sweep(context.Context)                    {}
 func (f *fakeEngine) StartFailures() []core.StartFailure {
 	return []core.StartFailure{{Name: "proj"}}
 }

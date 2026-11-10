@@ -13,7 +13,7 @@
   import Icon from './Icon.svelte'
   import StatePill from './StatePill.svelte'
   import { parseActivity } from './lib/activity'
-  import { bodyGeometry, sameGeometry, type BodyGeometry, type GridSize } from './lib/bodySize'
+  import { bodyGeometry, fitGrid, sameGeometry, type BodyGeometry, type GridSize } from './lib/bodySize'
   import { backgroundLabel, type BackgroundTasks } from './lib/cardText'
   import { watchDevicePixelRatio } from './lib/devicePixelRatio'
   import { frameClass } from './lib/frame'
@@ -33,6 +33,8 @@
     onFullscreen: (pid: number) => void
     onKill: (pid: number) => void
     onMeasure: (pid: number, size: GridSize | null) => void
+    /** Receives the terminal size that fills the body at a legible font, for a session the application may resize. */
+    onFit: (pid: number, size: GridSize | null) => void
     onVisible: (pid: number, visible: boolean) => void
   }
 
@@ -48,6 +50,7 @@
     onFullscreen,
     onKill,
     onMeasure,
+    onFit,
     onVisible,
   }: Props = $props()
 
@@ -108,6 +111,7 @@
       stopWatching()
       onVisible(pid, false)
       onMeasure(pid, null)
+      onFit(pid, null)
     }
   })
 
@@ -118,6 +122,15 @@
     const next = bodyGeometry(paneCols, paneRows, bodyWidth, bodyHeight, cellRatio)
     if (!sameGeometry(untrack(() => geometry), next)) geometry = next
     onMeasure(pid, { cols: next.cols, rows: next.rows })
+  })
+
+  const resizable = $derived(card.Private)
+  $effect(() => {
+    if (!resizable || !inTmux || bodyWidth <= 0 || bodyHeight <= 0) {
+      onFit(pid, null)
+      return
+    }
+    onFit(pid, fitGrid(bodyWidth, bodyHeight, cellRatio))
   })
 
   /** Draws the buffer with the latest geometry; a write still pending finishes by calling it again. */

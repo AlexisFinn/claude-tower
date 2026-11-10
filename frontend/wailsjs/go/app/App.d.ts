@@ -8,6 +8,8 @@ export function ChooseFiles():Promise<Array<string>>;
 
 export function CloseTerminal(arg1:number):Promise<void>;
 
+export function FitSession(arg1:number,arg2:number,arg3:number):Promise<void>;
+
 export function Focus(arg1:number):Promise<core.FocusResult>;
 
 export function Kill(arg1:number):Promise<void>;

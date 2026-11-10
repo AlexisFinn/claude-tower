@@ -65,3 +65,20 @@ export function sameGeometry(a: BodyGeometry | null, b: BodyGeometry | null): bo
     a.cellHeight === b.cellHeight
   )
 }
+
+/** Font size, in pixels, that a session sized to its card displays its text at. */
+export const FIT_FONT = 12
+/** Smallest terminal a session is sized to: below it Claude Code cannot lay out its screen. */
+export const MIN_FIT: GridSize = { cols: 60, rows: 12 }
+/** Largest terminal a session is sized to. */
+export const MAX_FIT = 1000
+
+/**
+ * Returns the terminal size that fills a card body at FIT_FONT, within MIN_FIT
+ * and MAX_FIT: a body too small for MIN_FIT shows it with a smaller font.
+ */
+export function fitGrid(bodyWidth: number, bodyHeight: number, cellRatio: CellSize): GridSize {
+  const fit = (length: number, cell: number, min: number): number =>
+    Math.min(MAX_FIT, Math.max(min, Math.floor(Math.max(0, length) / (cell * FIT_FONT) + 1e-9)))
+  return { cols: fit(bodyWidth, cellRatio.width, MIN_FIT.cols), rows: fit(bodyHeight, cellRatio.height, MIN_FIT.rows) }
+}

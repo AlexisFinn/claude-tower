@@ -125,6 +125,42 @@ func (c *Core) NewSession(ctx context.Context, dir string) error {
 	return nil
 }
 
+// Bounds of the size Fit accepts: below them Claude Code cannot lay out its screen.
+const (
+	minFitCols  = 60
+	minFitRows  = 12
+	maxFitCells = 1000
+)
+
+// Fit resizes the window of a session of the private server to cols x rows,
+// so that its card shows it without shrinking the text. A session that a
+// client shows, such as the fullscreen view or a terminal of the user, keeps
+// the size of that client. The clients are read again, because one may have
+// attached since the last snapshot.
+func (c *Core) Fit(ctx context.Context, pid, cols, rows int) error {
+	if cols < minFitCols || rows < minFitRows || cols > maxFitCells || rows > maxFitCells {
+		return fmt.Errorf("taille refusée : %dx%d", cols, rows)
+	}
+	pane, err := c.paneOfSession(pid)
+	if err != nil {
+		return err
+	}
+	if private := c.privateSocket(); private == "" || pane.Server.Socket != private {
+		return errors.New("seules les sessions lancées par claude-tower s'adaptent à leur carte")
+	}
+	if pane.Width == cols && pane.Height == rows {
+		return nil
+	}
+	clients, err := pane.Server.Clients(ctx)
+	if err != nil {
+		return err
+	}
+	if pane.Attached(clients) {
+		return nil
+	}
+	return pane.Server.FitWindow(ctx, pane.WindowID, cols, rows)
+}
+
 // Kill stops a session of the private server, or a background session of
 // Claude Code with `claude stop`.
 func (c *Core) Kill(ctx context.Context, pid int) error {

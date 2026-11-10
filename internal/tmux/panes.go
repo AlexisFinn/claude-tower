@@ -165,3 +165,11 @@ func (s Server) SwitchClient(ctx context.Context, client, pane string) error {
 	}
 	return nil
 }
+
+// FitWindow resizes a window to cols x rows, then gives it back the window-size
+// option of the server, so that the next client to show it sizes it again.
+func (s Server) FitWindow(ctx context.Context, window string, cols, rows int) error {
+	_, err := s.Exec(ctx, nil, "resize-window", "-t", window, "-x", strconv.Itoa(cols), "-y", strconv.Itoa(rows),
+		";", "set-option", "-wu", "-t", window, "window-size")
+	return err
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bodyGeometry, sameGeometry } from './bodySize'
+import { bodyGeometry, FIT_FONT, fitGrid, MAX_FIT, MIN_FIT, sameGeometry } from './bodySize'
 
 const ratio = { width: 0.6, height: 1.2 }
 
@@ -69,5 +69,27 @@ describe('sameGeometry', () => {
     expect(sameGeometry(null, null)).toBe(true)
     expect(sameGeometry(g, null)).toBe(false)
     expect(sameGeometry(null, g)).toBe(false)
+  })
+})
+
+describe('fitGrid', () => {
+  const ratio = { width: 0.6, height: 1.2 }
+
+  it('fills the body at the fit font', () => {
+    // A cell is 7.2 x 14.4 px at 12 px.
+    expect(fitGrid(900, 432, ratio)).toEqual({ cols: 125, rows: 30 })
+  })
+
+  it('gives the bodyGeometry font back for that many columns', () => {
+    const size = fitGrid(900, 432, ratio)
+    const g = bodyGeometry(size.cols, size.rows, 900, 432, ratio)
+    expect(g.font).toBeCloseTo(FIT_FONT, 0)
+    expect(g.rows).toBe(size.rows)
+  })
+
+  it('never goes below the smallest usable terminal nor above the largest', () => {
+    expect(fitGrid(100, 50, ratio)).toEqual(MIN_FIT)
+    expect(fitGrid(0, -5, ratio)).toEqual(MIN_FIT)
+    expect(fitGrid(1e6, 1e6, ratio)).toEqual({ cols: MAX_FIT, rows: MAX_FIT })
   })
 })
