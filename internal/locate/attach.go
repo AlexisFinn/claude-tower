@@ -75,17 +75,21 @@ func parsePSAttachments(out string) Attachments {
 // attach client: a program whose name contains "claude", possibly run by
 // node, bun or deno, options only, the word attach, then the id.
 func AttachTarget(argv []string) (string, bool) {
+	if len(argv) < 3 {
+		return "", false
+	}
 	// A script launcher runs the claude script given as its first argument,
-	// whose name is often cli.js in a claude directory: the whole path counts.
-	name := filepath.Base(argv[0])
-	if len(argv) > 1 {
-		switch name {
-		case "node", "bun", "deno":
-			argv = argv[1:]
-			name = argv[0]
+	// named claude or installed in the claude-code package.
+	name := strings.ToLower(filepath.Base(argv[0]))
+	switch name {
+	case "node", "bun", "deno":
+		argv = argv[1:]
+		name = strings.ToLower(filepath.Base(argv[0]))
+		if strings.Contains(filepath.ToSlash(argv[0]), "/claude-code/") {
+			name = "claude"
 		}
 	}
-	if len(argv) < 3 || !strings.Contains(strings.ToLower(name), "claude") {
+	if len(argv) < 3 || !strings.Contains(name, "claude") {
 		return "", false
 	}
 	for i := 1; i < len(argv)-1; i++ {

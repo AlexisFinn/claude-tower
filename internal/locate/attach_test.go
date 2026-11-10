@@ -20,7 +20,9 @@ func TestAttachTarget(t *testing.T) {
 		{[]string{"claude", "--resume", "x", "attach", "id"}, "", false},
 		{[]string{"vim", "attach", "id"}, "", false},
 		{[]string{"claude", "logs", "attach"}, "", false},
-		{[]string{"/usr/bin/node", "/opt/claude/cli.js", "attach", "ab12"}, "ab12", true},
+		{[]string{"/usr/bin/node", "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js", "attach", "ab12"}, "ab12", true},
+		{[]string{"node", "/home/claude/app/server.js", "attach", "ab12"}, "", false},
+		{nil, "", false},
 		{[]string{"node", "server.js", "attach", "ab12"}, "", false},
 	}
 	for _, c := range cases {

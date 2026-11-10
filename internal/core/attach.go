@@ -244,6 +244,7 @@ func (c *Core) syncAttachments(snap snapshot) {
 	}
 }
 
+// removeAttach destroys the attach session of p.
 func (c *Core) removeAttach(p tmux.Pane) {
 	defer func() {
 		c.mu.Lock()
@@ -255,6 +256,7 @@ func (c *Core) removeAttach(p tmux.Pane) {
 	p.Server.KillSession(ctx, p.SessionID)
 }
 
+// attach creates the attach session of the background session s.
 func (c *Core) attach(s registry.Session, id string) {
 	defer func() {
 		c.mu.Lock()
