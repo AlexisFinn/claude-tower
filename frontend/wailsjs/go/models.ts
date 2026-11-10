@@ -11,6 +11,7 @@ export namespace core {
 	    Activity: string;
 	    InTmux: boolean;
 	    Private: boolean;
+	    Detached: boolean;
 	    Attached: boolean;
 	    CanPrompt: boolean;
 	    PromptReason: string;
@@ -33,6 +34,7 @@ export namespace core {
 	        this.Activity = source["Activity"];
 	        this.InTmux = source["InTmux"];
 	        this.Private = source["Private"];
+	        this.Detached = source["Detached"];
 	        this.Attached = source["Attached"];
 	        this.CanPrompt = source["CanPrompt"];
 	        this.PromptReason = source["PromptReason"];

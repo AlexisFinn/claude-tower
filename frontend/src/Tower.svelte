@@ -202,7 +202,7 @@
 
   function askKill(card: core.Card | null): void {
     if (!card) return
-    if (!card.Private) {
+    if (!card.Private && !card.Detached) {
       notify('info', "Seules les sessions lancées par l'application peuvent être arrêtées.")
       return
     }
@@ -348,8 +348,13 @@
   {#if confirmKill !== null}
     <Dialog title="Arrêter la session" role="alertdialog" onClose={() => (confirmKill = null)}>
       <p class="confirm">
-        Arrêter la session <strong>{confirmKill.Name}</strong> (PID {confirmKill.PID}) ? Le processus sera
-        interrompu.
+        {#if confirmKill.Detached}
+          Arrêter la session d’arrière-plan <strong>{confirmKill.Name}</strong> ? Sa conversation est
+          conservée : <code>claude --resume</code> la retrouve.
+        {:else}
+          Arrêter la session <strong>{confirmKill.Name}</strong> (PID {confirmKill.PID}) ? Le processus sera
+          interrompu.
+        {/if}
       </p>
       <div class="actions">
         <button class="btn" data-autofocus title="Échap" onclick={() => (confirmKill = null)}>Annuler</button>

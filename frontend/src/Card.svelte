@@ -202,7 +202,7 @@
           <button class="icon-btn" aria-label="Aller au terminal" title="Aller au terminal (Entrée)" onclick={(e) => act(e, onFocus)}>
             <Icon name="terminal" />
           </button>
-          {#if card.Private}
+          {#if card.Private || card.Detached}
             <button class="icon-btn" aria-label="Arrêter la session" title="Arrêter la session (x)" onclick={(e) => act(e, onKill)}>
               <Icon name="stop" />
             </button>
@@ -212,8 +212,12 @@
     </div>
     <div class="line meta">
       <span class="cwd"><Icon name="folder" size={14} /><span class="path" title={card.Cwd}>{card.Cwd}</span></span>
-      {#if card.Private}<span class="tag">privée</span>{/if}
-      <span class="tag">{card.InTmux ? 'tmux' : 'hors tmux'}</span>
+      {#if card.Detached}
+        <span class="tag" title="Session d’arrière-plan de Claude Code">arrière-plan</span>
+      {:else}
+        {#if card.Private}<span class="tag">privée</span>{/if}
+        <span class="tag">{card.InTmux ? 'tmux' : 'hors tmux'}</span>
+      {/if}
       {#if backgroundText !== ''}<span class="tag">{backgroundText}</span>{/if}
     </div>
   </header>
@@ -244,7 +248,11 @@
   {:else}
     <div class="screen plain">
       <p class="activity-text">{card.Activity === '' ? 'Aucune activité' : card.Activity}</p>
-      <p class="readonly"><Icon name="lock" size={14} />Lecture seule : session hors tmux</p>
+      {#if card.Detached}
+        <p class="readonly"><Icon name="terminal" size={14} />Session d’arrière-plan : rattachement en cours…</p>
+      {:else}
+        <p class="readonly"><Icon name="lock" size={14} />Lecture seule : session hors tmux</p>
+      {/if}
     </div>
   {/if}
 </div>
