@@ -4,9 +4,12 @@ import { glyphShapes, isBoxGlyph, type Shape } from './boxDrawing'
 import { changedRows } from './rowDiff'
 import { readRow, type BufferLike, type DrawCell, type Row } from './screenCells'
 import { DEFAULT_BG } from './termPalette'
-import { outlines, strokeWidth, textColor } from './thumbnailInk'
+import { outlines, strokeWidth, textColor, type Ink } from './thumbnailInk'
 import { foldSubpixels, SUBPIXELS } from './subpixel'
 import { canvasScale, cellBounds } from './thumbnailLayout'
+
+/** Ink of the thumbnails when none is given. */
+export const DEFAULT_INK: Ink = { lift: 0.25, stroke: 0.045 }
 
 /** Font stack of the thumbnails. */
 export const THUMBNAIL_FONT_FAMILY = 'ui-monospace, "SFMono-Regular", Menlo, "DejaVu Sans Mono", "Liberation Mono", monospace'
@@ -66,6 +69,7 @@ function paintShapes(ctx: CanvasRenderingContext2D, shapes: Shape[], x: number, 
 
 /** The pixel geometry of a canvas, in backing pixels. */
 interface Pixels {
+  ink: Ink
   width: number
   cellWidth: number
   cellHeight: number
@@ -93,7 +97,7 @@ function paintRow(ctx: CanvasRenderingContext2D, row: Row, y: number, px: Pixels
   const { ascent, descent } = px.metrics
   const baseline = y0 + Math.round((height - (ascent + descent) * px.font) / 2 + ascent * px.font)
   const underline = Math.max(1, Math.round(px.font / 14))
-  const stroke = strokeWidth(px.font)
+  const stroke = strokeWidth(px.font, px.ink.stroke)
   ctx.lineJoin = 'round'
   let font = ''
   let fill = ''
@@ -101,7 +105,7 @@ function paintRow(ctx: CanvasRenderingContext2D, row: Row, y: number, px: Pixels
   for (const c of row.cells) {
     const x0 = cellBounds(c.col, px.cellWidth)[0]
     const code = c.ch === '' ? 0 : (c.ch.codePointAt(0) ?? 0)
-    const color = textColor(c.fg, c.bg)
+    const color = textColor(c.fg, c.bg, px.ink.lift)
     if (c.ch !== '' && c.ch.length === 1 && isBoxGlyph(code)) {
       // Box drawing keeps its own color: frames are drawn as solid shapes, which stay visible.
       paintShapes(ctx, glyphShapes(code, right(c) - x0, height), x0, y0, c.fg)
@@ -118,7 +122,7 @@ function paintRow(ctx: CanvasRenderingContext2D, row: Row, y: number, px: Pixels
         fill = color
       }
       ctx.fillText(c.ch, x0, baseline)
-      if (outlines(c.ch, c.wide)) {
+      if (stroke > 0 && outlines(c.ch, c.wide)) {
         if (color !== outline) {
           ctx.strokeStyle = color
           ctx.lineWidth = stroke
@@ -156,7 +160,7 @@ export interface Thumbnail {
    * pixels, which the color stripes need. Everything is redrawn when the
    * geometry, the font, the device pixel ratio or the rendering changed.
    */
-  draw(buffer: BufferLike, geometry: BodyGeometry, dpr: number, subpixel?: boolean): void
+  draw(buffer: BufferLike, geometry: BodyGeometry, dpr: number, subpixel?: boolean, ink?: Ink): void
 }
 
 /** Creates a thumbnail that draws into a canvas with a font family. */
@@ -193,7 +197,7 @@ export function createThumbnail(canvas: HTMLCanvasElement, family: string = THUM
   }
 
   return {
-    draw(buffer, g, dpr, subpixel = false) {
+    draw(buffer, g, dpr, subpixel = false, ink = DEFAULT_INK) {
       if (!ctx) return
       const display = Math.max(1, Number.isFinite(dpr) ? dpr : 1)
       const scale = subpixel ? display : canvasScale(dpr, g.cols * g.cellWidth, g.rows * g.cellHeight)
@@ -204,9 +208,10 @@ export function createThumbnail(canvas: HTMLCanvasElement, family: string = THUM
         font: g.font * scale,
         family,
         metrics,
+        ink,
       }
       const height = Math.max(1, Math.round(g.rows * px.cellHeight))
-      const key = `${px.width}x${height}|${g.cols}x${g.rows}|${px.font}|${subpixel}`
+      const key = `${px.width}x${height}|${g.cols}x${g.rows}|${px.font}|${subpixel}|${ink.lift}|${ink.stroke}`
       if (key !== layoutKey) {
         layoutKey = key
         canvas.width = px.width

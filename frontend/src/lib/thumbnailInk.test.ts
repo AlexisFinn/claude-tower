@@ -4,39 +4,39 @@ import { outlines, strokeWidth, textColor } from './thumbnailInk'
 
 describe('textColor', () => {
   it('lifts a dark color a quarter of the way to white on the default background', () => {
-    expect(textColor('#202020', null)).toBe('#585858')
-    expect(textColor('#202020', DEFAULT_BG)).toBe('#585858')
-    expect(textColor('#202020', '#2d3440')).toBe('#585858')
+    expect(textColor('#202020', null, 0.25)).toBe('#585858')
+    expect(textColor('#202020', DEFAULT_BG, 0.25)).toBe('#585858')
+    expect(textColor('#202020', '#2d3440', 0.25)).toBe('#585858')
   })
 
   it('keeps a color lighter than mid-gray', () => {
-    expect(textColor(DEFAULT_FG, null)).toBe(DEFAULT_FG)
-    expect(textColor('#a0a0a0', null)).toBe('#a0a0a0')
+    expect(textColor(DEFAULT_FG, null, 0.25)).toBe(DEFAULT_FG)
+    expect(textColor('#a0a0a0', null, 0.25)).toBe('#a0a0a0')
   })
 
   it('keeps any color on a colored or light background', () => {
-    expect(textColor('#202020', '#cc0000')).toBe('#202020')
-    expect(textColor('#202020', '#2d5a2d')).toBe('#202020')
-    expect(textColor('#202020', DEFAULT_FG)).toBe('#202020')
+    expect(textColor('#202020', '#cc0000', 0.25)).toBe('#202020')
+    expect(textColor('#202020', '#2d5a2d', 0.25)).toBe('#202020')
+    expect(textColor('#202020', DEFAULT_FG, 0.25)).toBe('#202020')
   })
 
   it('keeps a color it cannot read', () => {
-    expect(textColor('red', null)).toBe('red')
-    expect(textColor('#202020', 'black')).toBe('#202020')
+    expect(textColor('red', null, 0.25)).toBe('red')
+    expect(textColor('#202020', 'black', 0.25)).toBe('#202020')
   })
 })
 
 describe('textColor cache', () => {
   it('gives the same answers after many distinct colors', () => {
-    for (let i = 0; i < 5000; i++) textColor(`#${i.toString(16).padStart(6, '0')}`, null)
-    expect(textColor('#202020', null)).toBe('#585858')
-    expect(textColor('#202020', '#cc0000')).toBe('#202020')
+    for (let i = 0; i < 5000; i++) textColor(`#${i.toString(16).padStart(6, "0")}`, null, 0.25)
+    expect(textColor('#202020', null, 0.25)).toBe('#585858')
+    expect(textColor('#202020', '#cc0000', 0.25)).toBe('#202020')
   })
 })
 
 describe('strokeWidth', () => {
   it('is a small fraction of the font size', () => {
-    expect(strokeWidth(20)).toBeCloseTo(0.9)
+    expect(strokeWidth(20, 0.045)).toBeCloseTo(0.9)
   })
 })
 

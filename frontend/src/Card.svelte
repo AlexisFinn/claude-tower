@@ -14,6 +14,7 @@
   import type { Rect } from './lib/layout'
   import { screenSequence } from './lib/screenSequence'
   import { createThumbnail, measureFont, type Thumbnail } from './lib/thumbnail'
+  import type { Ink } from './lib/thumbnailInk'
   import type { ThumbnailStyle } from './lib/thumbnailStyle'
 
   interface Props {
@@ -58,12 +59,13 @@
   let dpr = $state(window.devicePixelRatio || 1)
   let lastContentKey = ''
   let lastPaintKey = ''
-  let current: { geometry: BodyGeometry; dpr: number; subpixel: boolean } | null = null
+  let current: { geometry: BodyGeometry; dpr: number; subpixel: boolean; ink: Ink } | null = null
 
   // The card object is replaced on every refresh: effects depend on these values instead.
   const pid = $derived(card.PID)
   const family = $derived(thumbnailStyle.family)
   const subpixel = $derived(thumbnailStyle.subpixel)
+  const ink = $derived(thumbnailStyle.ink)
   // measureFont caches by family, so every card shares one measure.
   const cellRatio = $derived(measureFont(family).cell)
   const inTmux = $derived(card.InTmux)
@@ -125,7 +127,7 @@
   /** Draws the buffer with the latest geometry; a write still pending finishes by calling it again. */
   function paint(): void {
     if (!term || !thumbnail || !current) return
-    thumbnail.draw(term.buffer.active, current.geometry, current.dpr, current.subpixel)
+    thumbnail.draw(term.buffer.active, current.geometry, current.dpr, current.subpixel, current.ink)
   }
 
   $effect(() => {
@@ -133,12 +135,13 @@
     const g = geometry
     const ratio = dpr
     const sub = subpixel
+    const inkNow = ink
     if (!t || !g || !thumbnail || !screen) return
     const contentKey = `${screen.Hash}|${g.cols}x${g.rows}`
-    const paintKey = `${contentKey}|${g.font}|${ratio}|${sub}`
+    const paintKey = `${contentKey}|${g.font}|${ratio}|${sub}|${inkNow.lift}|${inkNow.stroke}`
     if (paintKey === lastPaintKey) return
     lastPaintKey = paintKey
-    current = { geometry: g, dpr: ratio, subpixel: sub }
+    current = { geometry: g, dpr: ratio, subpixel: sub, ink: inkNow }
     if (contentKey === lastContentKey) {
       paint()
       return

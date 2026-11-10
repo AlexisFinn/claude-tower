@@ -1,9 +1,12 @@
 import { DEFAULT_BG, mixColors } from './termPalette'
 
-/** Fraction of the way to white by which a dark text color is lifted. */
-const LIFT = 0.25
-/** Glyph outline width, per pixel of font size. */
-const STROKE_PER_PX = 0.045
+/** How much a thumbnail thickens and lightens its text. */
+export interface Ink {
+  /** Fraction of the way to white by which a dark text color is lifted, 0 for none. */
+  lift: number
+  /** Glyph outline width per pixel of font size, 0 for none. */
+  stroke: number
+}
 /** Background luminance under which dim text is lifted: the default background and near-black ones, not colored ones. */
 const DARK_BACKGROUND = 0.05
 /** Text luminance under which a color is lifted, about mid-gray. */
@@ -31,13 +34,14 @@ const colorCache = new Map<string, string>()
  * near-black one a color darker than mid-gray moves part of the way to white.
  * Other colors, and text on any other background, are kept.
  */
-export function textColor(fg: string, bg: string | null): string {
-  const key = `${fg}|${bg ?? ''}`
+export function textColor(fg: string, bg: string | null, lift: number): string {
+  if (lift <= 0) return fg
+  const key = `${fg}|${bg ?? ''}|${lift}`
   let out = colorCache.get(key)
   if (out === undefined) {
     const back = bg ?? DEFAULT_BG
     const dark = HEX.test(fg) && HEX.test(back) && luminance(back) < DARK_BACKGROUND && luminance(fg) < DARK_TEXT
-    out = dark ? mixColors(fg, '#ffffff', LIFT) : fg
+    out = dark ? mixColors(fg, '#ffffff', lift) : fg
     if (colorCache.size >= CACHE_LIMIT) colorCache.clear()
     colorCache.set(key, out)
   }
@@ -48,8 +52,8 @@ export function textColor(fg: string, bg: string | null): string {
  * Returns the width of the outline drawn around the glyphs of a font size:
  * it thickens the strokes, which downscaling otherwise thins to faint lines.
  */
-export function strokeWidth(fontPx: number): number {
-  return fontPx * STROKE_PER_PX
+export function strokeWidth(fontPx: number, stroke: number): number {
+  return fontPx * stroke
 }
 
 /**
