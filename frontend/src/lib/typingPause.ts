@@ -1,4 +1,4 @@
-import type { Timers } from './refresher'
+import { realTimers, type Timers } from './timers'
 
 /** Options of createTypingPause. */
 export interface TypingPauseOptions {
@@ -17,13 +17,6 @@ export interface TypingPause {
   active(): boolean
   /** Ends the pause now, without calling onResume. */
   end(): void
-  /** Ends the pause without calling onResume. */
-  dispose(): void
-}
-
-const realTimers: Timers = {
-  set: (fn, ms) => setTimeout(fn, ms),
-  clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
 }
 
 /**
@@ -51,9 +44,6 @@ export function createTypingPause(options: TypingPauseOptions): TypingPause {
       return handle !== null
     },
     end() {
-      clearTimer()
-    },
-    dispose() {
       clearTimer()
     },
   }

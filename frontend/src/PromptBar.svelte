@@ -200,6 +200,7 @@
       disabled={availability.disabled}
       hidden={locked}
       rows="1"
+      style:--max-height="{MAX_HEIGHT}px"
       aria-label="Message à envoyer"
       {placeholder}
     ></textarea>
@@ -392,7 +393,7 @@
     flex: 1;
     min-width: 0;
     min-height: 28px;
-    max-height: 172px;
+    max-height: var(--max-height);
     margin: 0;
     padding: 4px 2px;
     font: inherit;

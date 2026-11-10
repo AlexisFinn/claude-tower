@@ -194,15 +194,15 @@
 
   function act(e: MouseEvent, action: (pid: number) => void): void {
     e.stopPropagation()
-    onSelect(card.PID)
-    action(card.PID)
+    onSelect(pid)
+    action(pid)
   }
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -- the grid keys are handled on the window -->
 <div
   bind:this={root}
-  id="card-{card.PID}"
+  id="card-{pid}"
   class="card {frameClass(card.State, selected)}"
   style:left="{rect.x}px"
   style:top="{rect.y}px"
@@ -211,8 +211,8 @@
   role="group"
   aria-label="{shownName}, {card.Label}"
   tabindex="-1"
-  onclick={() => onSelect(card.PID)}
-  ondblclick={() => onFocus(card.PID)}
+  onclick={() => onSelect(pid)}
+  ondblclick={() => onFocus(pid)}
 >
   <header>
     <div class="line">

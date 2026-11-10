@@ -3,7 +3,7 @@ import { gridKeyAction, type GridAction, type KeyLike } from './keys'
 /** The layers of the window that can be open above the grid. */
 export interface KeyLayers {
   fullscreen: boolean
-  confirmKill: boolean
+  confirm: boolean
   newSession: boolean
   help: boolean
 }
@@ -26,8 +26,8 @@ export type KeyRoute =
 export function routeKey(layers: KeyLayers, e: KeyLike, target: KeyTarget): KeyRoute | null {
   if (layers.fullscreen) return null
   const modified = e.ctrlKey || e.altKey || e.metaKey
-  if (layers.confirmKill) {
-    // A modified key never answers the confirmation, which stops a session.
+  if (layers.confirm) {
+    // A modified key never answers a confirmation, which stops a session or quits the application.
     if (modified) return null
     if ((e.key === 'Enter' && target !== 'button') || e.key === 'y') return { layer: 'confirm', action: 'accept' }
     if (e.key === 'Escape' || e.key === 'n') return { layer: 'confirm', action: 'cancel' }

@@ -11,7 +11,7 @@
   import PromptBar from './PromptBar.svelte'
   import ShortcutsDialog from './ShortcutsDialog.svelte'
   import Toasts from './Toasts.svelte'
-  import type { GridSize } from './lib/bodySize'
+  import { sameSize, type GridSize } from './lib/bodySize'
   import { displayName } from './lib/displayName'
   import { errorMessage } from './lib/errors'
   import { routeKey, type KeyTarget } from './lib/keyRouting'
@@ -69,10 +69,6 @@
     notifier.push(kind, text)
   }
 
-  function sameSize(a: GridSize | undefined, b: GridSize): boolean {
-    return a !== undefined && a.cols === b.cols && a.rows === b.rows
-  }
-
   function onMeasure(pid: number, size: GridSize | null): void {
     if (size === null) {
       sizes.delete(pid)
@@ -125,6 +121,14 @@
     if (!same) unavailable = next
   }
 
+  function setUnavailable(pid: number, value: boolean): void {
+    if (unavailable.has(pid) === value) return
+    const next = new Set(unavailable)
+    if (value) next.add(pid)
+    else next.delete(pid)
+    unavailable = next
+  }
+
   async function loadScreens(list: core.Card[]): Promise<void> {
     const next: Record<number, core.Screen> = {}
     for (const card of list) {
@@ -143,11 +147,11 @@
         const screen = await Screen(card.PID, size.rows)
         screens = { ...screens, [card.PID]: screen }
         failures.succeed(card.PID)
+        setUnavailable(card.PID, false)
         if (fullscreen === null) await fit(card, screen)
       } catch {
-        failures.fail(card.PID)
+        setUnavailable(card.PID, failures.fail(card.PID))
       }
-      syncUnavailable(list)
     }
   }
 
@@ -198,7 +202,7 @@
       window.removeEventListener('beforeunload', unguard)
       stopQuitRequests()
       refresher.stop()
-      typing.dispose()
+      typing.end()
       document.removeEventListener('visibilitychange', onVisibility)
       notifier.dispose()
     }
@@ -357,7 +361,7 @@
       return
     }
     const route = routeKey(
-      { fullscreen: fullscreen !== null, confirmKill: confirmKill !== null || confirmQuit, newSession: newSessionOpen, help: helpOpen },
+      { fullscreen: fullscreen !== null, confirm: confirmKill !== null || confirmQuit, newSession: newSessionOpen, help: helpOpen },
       e,
       keyTarget(e.target),
     )
@@ -404,23 +408,21 @@
       {:else}
         <div class="canvas" style:height="{placed.scrolls ? placed.contentHeight : gridHeight}px">
           {#each cards as card, i (card.PID)}
-            {#if placed.rects[i]}
-              <Card
-                {card}
-                background={backgroundOf(card)}
-                screen={screens[card.PID]}
-                unavailable={unavailable.has(card.PID)}
-                rect={insetRect(placed.rects[i], CARD_GAP / 2)}
-                selected={card.PID === selected}
-                onSelect={(pid) => (selected = pid)}
-                onFocus={(pid) => void focusCard(pid)}
-                onFullscreen={openFullscreenOf}
-                onKill={askKillOf}
-                {onMeasure}
-                {onFit}
-                {onVisible}
-              />
-            {/if}
+            <Card
+              {card}
+              background={backgroundOf(card)}
+              screen={screens[card.PID]}
+              unavailable={unavailable.has(card.PID)}
+              rect={insetRect(placed.rects[i], CARD_GAP / 2)}
+              selected={card.PID === selected}
+              onSelect={(pid) => (selected = pid)}
+              onFocus={(pid) => void focusCard(pid)}
+              onFullscreen={openFullscreenOf}
+              onKill={askKillOf}
+              {onMeasure}
+              {onFit}
+              {onVisible}
+            />
           {/each}
         </div>
       {/if}

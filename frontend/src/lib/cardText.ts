@@ -22,7 +22,7 @@ export function stateLabel(state: string, label: string): string {
       return label === 'démarrage' ? 'Démarre' : 'Travaille'
     case 'waiting':
       return waitingLabel(label)
-    default:
+    case 'unknown':
       return label === '' || label === '?' ? 'Inconnu' : capitalize(label)
   }
 }

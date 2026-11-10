@@ -181,3 +181,23 @@ export function glyphShapes(codePoint: number, w: number, h: number): Shape[] {
   if (!isBoxGlyph(codePoint)) return []
   return codePoint <= 0x257f ? boxShapes(codePoint - FIRST, w, h) : blockShapes(codePoint, w, h)
 }
+
+/** Returns the shapes of a glyph in a w x h cell, the same list for the same arguments. */
+export type GlyphCache = (codePoint: number, w: number, h: number) => Shape[]
+
+/**
+ * Creates a memoized glyphShapes. The cache grows with the distinct glyph and
+ * cell sizes asked, so a geometry change calls for a new one.
+ */
+export function createGlyphCache(): GlyphCache {
+  const shapes = new Map<string, Shape[]>()
+  return (codePoint, w, h) => {
+    const key = `${codePoint}|${w}|${h}`
+    let known = shapes.get(key)
+    if (!known) {
+      known = glyphShapes(codePoint, w, h)
+      shapes.set(key, known)
+    }
+    return known
+  }
+}

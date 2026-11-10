@@ -54,6 +54,11 @@ export function bodyGeometry(
   return { cols, rows, font, cellWidth, cellHeight }
 }
 
+/** Reports whether two terminal sizes are the same; an unknown size is never the same. */
+export function sameSize(a: GridSize | undefined, b: GridSize): boolean {
+  return a !== undefined && a.cols === b.cols && a.rows === b.rows
+}
+
 /** Reports whether two geometries are the same. */
 export function sameGeometry(a: BodyGeometry | null, b: BodyGeometry | null): boolean {
   if (a === null || b === null) return a === b

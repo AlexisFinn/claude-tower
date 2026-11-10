@@ -1,4 +1,4 @@
-import type { GridSize } from './bodySize'
+import { sameSize, type GridSize } from './bodySize'
 
 /** Wait before a size that failed is asked again. */
 export const FIT_RETRY_MS = 30_000
@@ -27,10 +27,6 @@ export interface FitRequests {
   prune(pids: readonly number[]): void
 }
 
-function same(a: GridSize, b: GridSize): boolean {
-  return a.cols === b.cols && a.rows === b.rows
-}
-
 /** Creates the tracker; now returns the current time in milliseconds. */
 export function createFitRequests(now: () => number = Date.now): FitRequests {
   const asked = new Map<number, { size: GridSize; retryAt: number }>()
@@ -42,9 +38,9 @@ export function createFitRequests(now: () => number = Date.now): FitRequests {
         asked.delete(pid)
         return false
       }
-      if (same(wanted, screen)) return false
+      if (sameSize(wanted, screen)) return false
       const last = asked.get(pid)
-      return !last || !same(last.size, wanted) || now() >= last.retryAt
+      return !last || !sameSize(last.size, wanted) || now() >= last.retryAt
     },
     ticket(pid) {
       return tickets.get(pid) ?? 0

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { glyphShapes, isBoxGlyph, type RectShape, type Shape } from './boxDrawing'
+import { createGlyphCache, glyphShapes, isBoxGlyph, type RectShape, type Shape } from './boxDrawing'
 
 const W = 10
 const H = 20
@@ -129,5 +129,28 @@ describe('glyphShapes', () => {
     for (let code = 0x2500; code <= 0x259f; code++) {
       expect(glyphShapes(code, W, H).length, code.toString(16)).toBeGreaterThan(0)
     }
+  })
+})
+
+describe('createGlyphCache', () => {
+  it('returns the shapes of glyphShapes, the same list for the same arguments', () => {
+    const glyphs = createGlyphCache()
+    const first = glyphs(0x250c, W, H)
+    expect(first).toEqual(glyphShapes(0x250c, W, H))
+    expect(glyphs(0x250c, W, H)).toBe(first)
+  })
+
+  it('tells glyphs and cell sizes apart', () => {
+    const glyphs = createGlyphCache()
+    const first = glyphs(0x250c, W, H)
+    expect(glyphs(0x2510, W, H)).not.toBe(first)
+    expect(glyphs(0x250c, W + 1, H)).toEqual(glyphShapes(0x250c, W + 1, H))
+    expect(glyphs(0x250c, W + 1, H)).not.toBe(first)
+    expect(glyphs(0x250c, W, H + 1)).toEqual(glyphShapes(0x250c, W, H + 1))
+    expect(glyphs(0x250c, W, H)).toBe(first)
+  })
+
+  it('does not share its lists with another cache', () => {
+    expect(createGlyphCache()(0x250c, W, H)).not.toBe(createGlyphCache()(0x250c, W, H))
   })
 })

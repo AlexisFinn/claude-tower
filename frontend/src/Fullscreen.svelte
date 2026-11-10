@@ -12,6 +12,7 @@
   import { displayName } from './lib/displayName'
   import { errorMessage } from './lib/errors'
   import { terminalKeyAction } from './lib/keys'
+  import { DEFAULT_BG, DEFAULT_FG } from './lib/termPalette'
   import { createInputGate, openTerminalSession, type TerminalSession } from './lib/terminalSession'
 
   let { card, onExit }: { card: core.Card; onExit: () => void } = $props()
@@ -42,7 +43,7 @@
       fontFamily: 'ui-monospace, "SFMono-Regular", Menlo, "DejaVu Sans Mono", monospace',
       cursorBlink: true,
       allowProposedApi: true,
-      theme: { background: '#07090c', foreground: '#e7ecf3' },
+      theme: { background: DEFAULT_BG, foreground: DEFAULT_FG },
     })
     const fit = new FitAddon()
     term.loadAddon(fit)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Timers } from './refresher'
+import type { Timers } from './timers'
 import { createTypingPause } from './typingPause'
 
 class FakeTimers implements Timers {
@@ -69,17 +69,6 @@ describe('createTypingPause', () => {
     expect(pause.active()).toBe(true)
     timers.fire()
     expect(resumed).toBe(2)
-  })
-
-  it('does not resume after dispose', () => {
-    const timers = new FakeTimers()
-    let resumed = 0
-    const pause = createTypingPause({ onResume: () => resumed++, timers })
-    pause.touch()
-    pause.dispose()
-    expect(pause.active()).toBe(false)
-    expect(timers.pending.size).toBe(0)
-    expect(resumed).toBe(0)
   })
 
   it('ends the pause on demand without resuming', () => {

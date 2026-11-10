@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { createToasts, MAX_TOASTS, TOAST_DURATION_MS, type Timers, type Toast } from './toasts'
+import { createToasts, MAX_TOASTS, TOAST_DURATION_MS, type Toast } from './toasts'
+import type { Timers } from './timers'
 
 /** Timers driven by hand: time only moves when the test advances it. */
 function fakeTimers() {

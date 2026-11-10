@@ -1,6 +1,6 @@
 import type { IBufferCell } from '@xterm/xterm'
 import { FALLBACK_CELL_RATIO, type BodyGeometry, type CellSize } from './bodySize'
-import { glyphShapes, isBoxGlyph, type Shape } from './boxDrawing'
+import { createGlyphCache, isBoxGlyph, type GlyphCache, type Shape } from './boxDrawing'
 import { changedRows } from './rowDiff'
 import { readRow, type BufferLike, type DrawCell, type Row } from './screenCells'
 import { DEFAULT_BG } from './termPalette'
@@ -79,11 +79,18 @@ interface Pixels {
   cellWidth: number
   cellHeight: number
   font: number
-  family: string
+  /** Canvas font strings by style: bit 0 is bold, bit 1 is italic. */
+  fonts: string[]
+  glyphs: GlyphCache
   metrics: FontMetrics
 }
 
+function fontVariants(size: number, family: string): string[] {
+  return ['', 'bold ', 'italic ', 'italic bold '].map((style) => `${style}${size}px ${family}`)
+}
+
 function paintRow(ctx: CanvasRenderingContext2D, row: Row, y: number, px: Pixels): void {
+  const right = (c: DrawCell): number => cellBounds(c.wide ? c.col + 1 : c.col, px.cellWidth)[1]
   const [y0, y1] = cellBounds(y, px.cellHeight)
   const height = y1 - y0
   ctx.save()
@@ -92,7 +99,6 @@ function paintRow(ctx: CanvasRenderingContext2D, row: Row, y: number, px: Pixels
   ctx.clip()
   ctx.fillStyle = DEFAULT_BG
   ctx.fillRect(0, y0, px.width, height)
-  const right = (c: DrawCell): number => cellBounds(c.wide ? c.col + 1 : c.col, px.cellWidth)[1]
   for (const c of row.cells) {
     if (c.bg === null) continue
     const x0 = cellBounds(c.col, px.cellWidth)[0]
@@ -108,10 +114,10 @@ function paintRow(ctx: CanvasRenderingContext2D, row: Row, y: number, px: Pixels
     const x0 = cellBounds(c.col, px.cellWidth)[0]
     const code = c.ch === '' ? 0 : (c.ch.codePointAt(0) ?? 0)
     if (c.ch !== '' && c.ch.length === 1 && isBoxGlyph(code)) {
-      paintShapes(ctx, glyphShapes(code, right(c) - x0, height), x0, y0, c.fg)
+      paintShapes(ctx, px.glyphs(code, right(c) - x0, height), x0, y0, c.fg)
       fill = ''
     } else if (c.ch !== '') {
-      const next = `${c.italic ? 'italic ' : ''}${c.bold ? 'bold ' : ''}${px.font}px ${px.family}`
+      const next = px.fonts[(c.bold ? 1 : 0) | (c.italic ? 2 : 0)]
       if (next !== font) {
         ctx.font = next
         font = next
@@ -162,6 +168,7 @@ export function createThumbnail(canvas: HTMLCanvasElement, family: string = THUM
   let signatures: string[] = []
   let cell: IBufferCell | undefined
   let shift = { x: 0, y: 0 }
+  let pixels: Pixels | null = null
 
   /** Aligns the canvas from its current position, without clearing its shift first, so no layout is forced twice. */
   function align(dpr: number): void {
@@ -180,23 +187,20 @@ export function createThumbnail(canvas: HTMLCanvasElement, family: string = THUM
     draw(buffer, g, dpr) {
       if (!ctx) return
       const scale = displayScale(dpr)
-      const px: Pixels = {
-        width: Math.max(1, Math.round(g.cols * g.cellWidth * scale)),
-        cellWidth: g.cellWidth * scale,
-        cellHeight: g.cellHeight * scale,
-        font: g.font * scale,
-        family,
-        metrics,
-      }
-      const height = Math.max(1, Math.round(g.rows * px.cellHeight))
-      const key = `${px.width}x${height}|${g.cols}x${g.rows}|${px.cellWidth}x${px.cellHeight}|${px.font}`
-      if (key !== layoutKey) {
+      const width = Math.max(1, Math.round(g.cols * g.cellWidth * scale))
+      const cellWidth = g.cellWidth * scale
+      const cellHeight = g.cellHeight * scale
+      const font = g.font * scale
+      const height = Math.max(1, Math.round(g.rows * cellHeight))
+      const key = `${width}x${height}|${g.cols}x${g.rows}|${cellWidth}x${cellHeight}|${font}`
+      if (key !== layoutKey || pixels === null) {
         layoutKey = key
-        canvas.width = px.width
+        pixels = { width, cellWidth, cellHeight, font, fonts: fontVariants(font, family), glyphs: createGlyphCache(), metrics }
+        canvas.width = width
         canvas.height = height
         // Each backing pixel is displayed on exactly one device pixel, so the
         // browser never resamples the color stripes.
-        canvas.style.width = `${px.width / scale}px`
+        canvas.style.width = `${width / scale}px`
         canvas.style.height = `${height / scale}px`
         signatures = []
         align(dpr)
@@ -207,7 +211,7 @@ export function createThumbnail(canvas: HTMLCanvasElement, family: string = THUM
       const rows: Row[] = []
       for (let y = 0; y < g.rows; y++) rows.push(readRow(buffer.getLine(y), g.cols, cell))
       const next = rows.map((r) => r.signature)
-      for (const y of changedRows(signatures, next)) paintRow(ctx, rows[y], y, px)
+      for (const y of changedRows(signatures, next)) paintRow(ctx, rows[y], y, pixels)
       signatures = next
     },
   }

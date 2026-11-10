@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { KeyLike } from './keys'
 import { routeKey, type KeyLayers } from './keyRouting'
 
-const GRID: KeyLayers = { fullscreen: false, confirmKill: false, newSession: false, help: false }
+const GRID: KeyLayers = { fullscreen: false, confirm: false, newSession: false, help: false }
 
 function key(k: string, mods: Partial<KeyLike> = {}): KeyLike {
   return { key: k, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, ...mods }
@@ -39,11 +39,11 @@ describe('routeKey under a layer', () => {
   })
 
   it('full screen wins over the dialogs', () => {
-    expect(routeKey({ ...GRID, fullscreen: true, confirmKill: true, help: true }, key('y'), 'other')).toBeNull()
+    expect(routeKey({ ...GRID, fullscreen: true, confirm: true, help: true }, key('y'), 'other')).toBeNull()
   })
 
-  it('never lets a grid key act under the kill dialog', () => {
-    const layers = { ...GRID, confirmKill: true }
+  it('never lets a grid key act under a confirmation dialog', () => {
+    const layers = { ...GRID, confirm: true }
     for (const k of ['ArrowLeft', 'h', 'j', 'k', 'l', 'o', 'i', '/', 'n', 'x', '?']) {
       const route = routeKey(layers, key(k), 'other')
       expect(route === null || route.layer === 'confirm').toBe(true)
@@ -52,16 +52,16 @@ describe('routeKey under a layer', () => {
     expect(routeKey(layers, key('?'), 'other')).toBeNull()
   })
 
-  it('accepts or cancels the kill dialog', () => {
-    const layers = { ...GRID, confirmKill: true }
+  it('accepts or cancels a confirmation dialog', () => {
+    const layers = { ...GRID, confirm: true }
     expect(routeKey(layers, key('y'), 'other')).toEqual({ layer: 'confirm', action: 'accept' })
     expect(routeKey(layers, key('Enter'), 'other')).toEqual({ layer: 'confirm', action: 'accept' })
     expect(routeKey(layers, key('Escape'), 'other')).toEqual({ layer: 'confirm', action: 'cancel' })
     expect(routeKey(layers, key('n'), 'other')).toEqual({ layer: 'confirm', action: 'cancel' })
   })
 
-  it('leaves Enter to a focused button of the kill dialog', () => {
-    expect(routeKey({ ...GRID, confirmKill: true }, key('Enter'), 'button')).toBeNull()
+  it('leaves Enter to a focused button of a confirmation dialog', () => {
+    expect(routeKey({ ...GRID, confirm: true }, key('Enter'), 'button')).toBeNull()
   })
 
   it('closes the help only on Escape or ?', () => {
@@ -86,16 +86,16 @@ describe('routeKey under a layer', () => {
     expect(routeKey({ ...GRID, fullscreen: true, newSession: true }, key('Escape'), 'text')).toBeNull()
   })
 
-  it('the kill dialog wins over the help', () => {
-    expect(routeKey({ ...GRID, confirmKill: true, help: true }, key('?'), 'other')).toBeNull()
+  it('a confirmation dialog wins over the help', () => {
+    expect(routeKey({ ...GRID, confirm: true, help: true }, key('?'), 'other')).toBeNull()
   })
 })
 
 describe('routeKey with modifiers on dialogs', () => {
-  const CONFIRM: KeyLayers = { ...GRID, confirmKill: true }
+  const CONFIRM: KeyLayers = { ...GRID, confirm: true }
   const HELP: KeyLayers = { ...GRID, help: true }
 
-  it('never accepts the stop confirmation with a modified key', () => {
+  it('never accepts a confirmation with a modified key', () => {
     for (const mods of [{ ctrlKey: true }, { altKey: true }, { metaKey: true }]) {
       expect(routeKey(CONFIRM, key('y', mods), 'other')).toBeNull()
       expect(routeKey(CONFIRM, key('Enter', mods), 'other')).toBeNull()

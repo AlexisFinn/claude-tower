@@ -11,7 +11,8 @@
 
   let { title, role = 'dialog', width = 420, onClose, children }: Props = $props()
 
-  const titleId = `dialog-title-${Math.random().toString(36).slice(2)}`
+  const uid = $props.id()
+  const titleId = `dialog-title-${uid}`
   const FOCUSABLE = 'button:not(:disabled), [href], input:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
 
   let panel: HTMLDivElement
