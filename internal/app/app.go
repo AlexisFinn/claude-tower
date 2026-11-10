@@ -50,7 +50,7 @@ type Engine interface {
 	Focus(ctx context.Context, pid int) (core.FocusResult, error)
 	NewSession(ctx context.Context, dir string) error
 	Kill(ctx context.Context, pid int) error
-	Fit(ctx context.Context, pid, cols, rows int) error
+	Fit(ctx context.Context, pid, cols, rows int) (bool, error)
 	PaneOf(pid int) (tmux.Pane, bool)
 	Sweep(ctx context.Context)
 	StartFailures() []core.StartFailure
@@ -256,11 +256,12 @@ func (a *App) Kill(pid int) error {
 }
 
 // FitSession resizes a session launched by the application to the size its
-// card shows without shrinking the text, unless a client shows it.
-func (a *App) FitSession(pid, cols, rows int) error {
+// card shows without shrinking the text, unless a client shows it, and
+// reports whether the session has that size now.
+func (a *App) FitSession(pid, cols, rows int) (bool, error) {
 	e, err := a.ready()
 	if err != nil {
-		return err
+		return false, err
 	}
 	ctx, cancel := callContext()
 	defer cancel()

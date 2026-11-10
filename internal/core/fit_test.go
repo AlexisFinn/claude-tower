@@ -36,8 +36,8 @@ func resizeCalls(e *env, sock string) [][]string {
 
 func TestFitResizesPrivateWindowAndRestoresItsSizeOption(t *testing.T) {
 	e, c := fitEnv(t)
-	if err := c.Fit(context.Background(), 200, 120, 40); err != nil {
-		t.Fatal(err)
+	if ok, err := c.Fit(context.Background(), 200, 120, 40); err != nil || !ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
 	}
 	want := [][]string{{"resize-window", "-t", "@7", "-x", "120", "-y", "40", ";", "set-option", "-wu", "-t", "@7", "window-size"}}
 	if got := resizeCalls(e, e.privSock); !reflect.DeepEqual(got, want) {
@@ -47,7 +47,7 @@ func TestFitResizesPrivateWindowAndRestoresItsSizeOption(t *testing.T) {
 
 func TestFitLeavesTheUsersTmuxAlone(t *testing.T) {
 	e, c := fitEnv(t)
-	if err := c.Fit(context.Background(), 100, 120, 40); err == nil {
+	if _, err := c.Fit(context.Background(), 100, 120, 40); err == nil {
 		t.Error("session of the user's tmux resized")
 	}
 	if got := resizeCalls(e, e.userSock); got != nil {
@@ -59,8 +59,8 @@ func TestFitKeepsTheSizeOfAnAttachedClient(t *testing.T) {
 	e, c := fitEnv(t)
 	// The client attaches after the snapshot: Fit reads the clients again.
 	e.fake.clients[e.privSock] = clientLine("/dev/pts/4", 700, "$7", "b", "", 1)
-	if err := c.Fit(context.Background(), 200, 120, 40); err != nil {
-		t.Fatal(err)
+	if ok, err := c.Fit(context.Background(), 200, 120, 40); err != nil || ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
 	}
 	if got := resizeCalls(e, e.privSock); got != nil {
 		t.Errorf("attached window resized: %v", got)
@@ -69,8 +69,8 @@ func TestFitKeepsTheSizeOfAnAttachedClient(t *testing.T) {
 
 func TestFitSkipsAWindowAlreadyAtThatSize(t *testing.T) {
 	e, c := fitEnv(t)
-	if err := c.Fit(context.Background(), 200, 80, 24); err != nil {
-		t.Fatal(err)
+	if ok, err := c.Fit(context.Background(), 200, 80, 24); err != nil || !ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
 	}
 	if got := resizeCalls(e, e.privSock); got != nil {
 		t.Errorf("resize of a window at the right size: %v", got)
@@ -80,7 +80,7 @@ func TestFitSkipsAWindowAlreadyAtThatSize(t *testing.T) {
 func TestFitRefusesUnusableSizes(t *testing.T) {
 	e, c := fitEnv(t)
 	for _, size := range [][2]int{{59, 40}, {120, 11}, {1001, 40}, {120, 1001}} {
-		if err := c.Fit(context.Background(), 200, size[0], size[1]); err == nil {
+		if _, err := c.Fit(context.Background(), 200, size[0], size[1]); err == nil {
 			t.Errorf("size %v accepted", size)
 		}
 	}
@@ -93,9 +93,12 @@ func TestFitKeepsTheSizeOfTheFullscreenView(t *testing.T) {
 	e, c := fitEnv(t)
 	// The view session exists, attached or not: its client is not among the clients the snapshot counts.
 	e.fake.listing[e.privSock] = "$7\tb\tb\n$9\tclaude-tower-view-1-1\tb\n"
+	if ok, err := c.Fit(context.Background(), 200, 120, 40); err != nil || ok {
+		t.Fatalf("before the attach: ok=%v err=%v", ok, err)
+	}
 	e.fake.clients[e.privSock] = clientLine("/dev/pts/5", 800, "$9", "claude-tower-view-1-1", "b", 1)
-	if err := c.Fit(context.Background(), 200, 120, 40); err != nil {
-		t.Fatal(err)
+	if ok, err := c.Fit(context.Background(), 200, 120, 40); err != nil || ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
 	}
 	if got := resizeCalls(e, e.privSock); got != nil {
 		t.Errorf("window of the fullscreen view resized: %v", got)
@@ -108,7 +111,7 @@ func TestFitLeavesBackgroundAttachSessionsAlone(t *testing.T) {
 	if _, err := c.Cards(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Fit(context.Background(), 200, 120, 40); err == nil {
+	if _, err := c.Fit(context.Background(), 200, 120, 40); err == nil {
 		t.Error("attach session resized")
 	}
 	if got := resizeCalls(e, e.privSock); got != nil {

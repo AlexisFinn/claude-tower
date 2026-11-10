@@ -137,40 +137,44 @@ const (
 // client shows, such as the fullscreen view or a terminal of the user, keeps
 // the size of that client, and so does a session with a view session not
 // attached yet. Both are read again, because they may have appeared since the
-// last snapshot.
-func (c *Core) Fit(ctx context.Context, pid, cols, rows int) error {
+// last snapshot. It reports whether the window has the size now, which is
+// false when a client keeps it.
+func (c *Core) Fit(ctx context.Context, pid, cols, rows int) (bool, error) {
 	if cols < minFitCols || rows < minFitRows || cols > maxFitCells || rows > maxFitCells {
-		return fmt.Errorf("taille refusée : %dx%d", cols, rows)
+		return false, fmt.Errorf("taille refusée : %dx%d", cols, rows)
 	}
 	pane, err := c.paneOfSession(pid)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if private := c.privateSocket(); private == "" || pane.Server.Socket != private {
-		return errors.New("seules les sessions lancées par claude-tower s'adaptent à leur carte")
+		return false, errors.New("seules les sessions lancées par claude-tower s'adaptent à leur carte")
 	}
 	// An attach session shows a background session that other clients may
 	// show too: its size is theirs to choose.
 	if strings.HasPrefix(pane.SessionName, tmux.AttachPrefix) {
-		return errors.New("une session d'arrière-plan garde sa taille")
+		return false, errors.New("une session d'arrière-plan garde sa taille")
 	}
 	if pane.Width == cols && pane.Height == rows {
-		return nil
+		return true, nil
 	}
 	// A view session shows the pane in fullscreen, or is about to: its client
 	// is not among Clients, which leaves view sessions out.
 	views, err := pane.Server.ViewSessionsOf(ctx, pane)
 	if err != nil || len(views) > 0 {
-		return err
+		return false, err
 	}
 	clients, err := pane.Server.Clients(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if pane.Attached(clients) {
-		return nil
+		return false, nil
 	}
-	return pane.Server.FitWindow(ctx, pane.WindowID, cols, rows)
+	if err := pane.Server.FitWindow(ctx, pane.WindowID, cols, rows); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // Kill stops a session of the private server, or a background session of

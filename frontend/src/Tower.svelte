@@ -22,6 +22,7 @@
   import { reconcileSelection } from './lib/selection'
   import { startFailureText } from './lib/startFailures'
   import { summarizeStates } from './lib/summary'
+  import { createFitRequests } from './lib/fitRequests'
   import { createToasts, type Toast, type ToastKind } from './lib/toasts'
   import { createTypingPause } from './lib/typingPause'
 
@@ -45,10 +46,7 @@
 
   const sizes = new Map<number, GridSize>()
   const fits = new Map<number, GridSize>()
-  // The last size asked per session: a session that cannot reach it, such as a
-  // window split in several panes, is not asked again until the wanted size
-  // changes or a fullscreen view has shown it.
-  const asked = new Map<number, GridSize>()
+  const fitRequests = createFitRequests()
   const visible = new Set<number>()
   const failures = createFailureTracker()
   const notifier = createToasts((list) => (toasts = list))
@@ -82,7 +80,7 @@
   function onFit(pid: number, size: GridSize | null): void {
     if (size === null) {
       fits.delete(pid)
-      asked.delete(pid)
+      fitRequests.forget(pid)
     } else {
       fits.set(pid, size)
     }
@@ -95,15 +93,11 @@
    */
   async function fit(card: core.Card, screen: core.Screen): Promise<void> {
     const size = fits.get(card.PID)
-    // A client resizes the window while it shows the session: the size is asked again once it leaves.
-    if (card.Attached) asked.delete(card.PID)
-    if (!size || card.Attached || (screen.Width === size.cols && screen.Height === size.rows)) return
-    if (sameSize(asked.get(card.PID), size)) return
-    asked.set(card.PID, size)
+    if (!size || !fitRequests.shouldAsk(card.PID, size, { cols: screen.Width, rows: screen.Height }, card.Attached)) return
     try {
-      await FitSession(card.PID, size.cols, size.rows)
+      fitRequests.record(card.PID, size, (await FitSession(card.PID, size.cols, size.rows)) ? 'applied' : 'kept')
     } catch {
-      // A failure is not retried until the wanted size changes.
+      fitRequests.record(card.PID, size, 'failed')
     }
   }
 
@@ -131,6 +125,7 @@
     }
     screens = next
     failures.prune(list.map((c) => c.PID))
+    fitRequests.prune(list.map((c) => c.PID))
     syncUnavailable(list)
     for (const card of list) {
       const size = sizes.get(card.PID)
@@ -203,7 +198,7 @@
 
   function closeFullscreen(): void {
     if (fullscreen === null) return
-    asked.delete(fullscreen.PID)
+    fitRequests.forget(fullscreen.PID)
     fullscreen = null
     refresher.kick()
   }
