@@ -2,10 +2,13 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -389,5 +392,37 @@ func TestSortSessions(t *testing.T) {
 	}
 	if !reflect.DeepEqual(pids, []int{0, 1, 2, 3}) {
 		t.Errorf("pids=%v", pids)
+	}
+}
+
+func TestReadServersReportsPanesAndClientsFailures(t *testing.T) {
+	panesLine := paneLine("%1", 10, "$1", "a", "@1", "")
+	fail := func(failing ...string) tmux.Runner {
+		return func(_ context.Context, _ io.Reader, _ string, args ...string) ([]byte, error) {
+			switch args[2] {
+			case "list-panes":
+				if slices.Contains(failing, "list-panes") {
+					return nil, errors.New("panes failed")
+				}
+				return []byte(panesLine), nil
+			default:
+				if slices.Contains(failing, "list-clients") {
+					return nil, errors.New("clients failed")
+				}
+				return []byte(clientLine("/dev/pts/1", 7, "$1", "a", "", 5)), nil
+			}
+		}
+	}
+	read := func(failing ...string) serverState {
+		return (&Core{}).readServers(context.Background(), []tmux.Server{{Socket: "/s", Run: fail(failing...)}})[0]
+	}
+	if st := read(); !st.ok || len(st.panes) != 1 || len(st.clients) != 1 {
+		t.Errorf("healthy server: %+v", st)
+	}
+	if st := read("list-clients"); st.ok || st.err == nil || st.err.Error() != "clients failed" {
+		t.Errorf("clients failure: %+v", st)
+	}
+	if st := read("list-panes", "list-clients"); st.ok || st.err == nil || st.err.Error() != "panes failed" {
+		t.Errorf("both failing: %+v", st)
 	}
 }

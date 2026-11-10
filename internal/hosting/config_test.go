@@ -94,6 +94,42 @@ func TestEnsureConfigReloadsRunningServer(t *testing.T) {
 	}
 }
 
+func TestEnsureConfigChangedReloadsOnlyAfterAChange(t *testing.T) {
+	rec := &recorder{}
+	h := newHosting(t, rec)
+	path := filepath.Join(h.ConfigDir, "tmux.conf")
+	want := [][]string{{"list-sessions"}, {"source-file", path}}
+	if err := h.ensureConfigChanged(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := rec.tmuxCommands(); !reflect.DeepEqual(got, want) {
+		t.Errorf("first call: got %v want %v", got, want)
+	}
+	rec.calls = nil
+	if err := h.ensureConfigChanged(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := rec.tmuxCommands(); len(got) != 0 {
+		t.Errorf("unchanged file reloaded: %v", got)
+	}
+	if err := os.WriteFile(path, []byte("set -g mouse off\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.ensureConfigChanged(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := rec.tmuxCommands(); !reflect.DeepEqual(got, want) {
+		t.Errorf("rewritten file: got %v want %v", got, want)
+	}
+	rec.calls = nil
+	if err := h.EnsureConfig(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := rec.tmuxCommands(); !reflect.DeepEqual(got, want) {
+		t.Errorf("EnsureConfig on an unchanged file: got %v want %v", got, want)
+	}
+}
+
 func TestEnsureConfigKeepsUnchangedFile(t *testing.T) {
 	h := newHosting(t, &recorder{})
 	if err := h.EnsureConfig(context.Background()); err != nil {

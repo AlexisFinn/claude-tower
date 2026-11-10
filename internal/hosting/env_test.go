@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -140,7 +142,7 @@ func TestLoginShellEnvAcceptsLingeringChild(t *testing.T) {
 	}
 }
 
-func TestLoginShellEnvFailureIsNotCached(t *testing.T) {
+func TestLoginShellEnvFailureIsKeptUntilRetryDelay(t *testing.T) {
 	fail := true
 	rec := &recorder{reply: func(string, []string) ([]byte, error) {
 		if fail {
@@ -149,13 +151,102 @@ func TestLoginShellEnvFailureIsNotCached(t *testing.T) {
 		return []byte("A=1\x00"), nil
 	}}
 	h := newHosting(t, rec)
+	now := time.Unix(1000, 0)
+	h.Now = func() time.Time { return now }
 	if _, err := h.loginShellEnv(context.Background()); err == nil {
 		t.Fatal("failure hidden")
 	}
 	fail = false
+	now = now.Add(loginRetry - time.Second)
+	if _, err := h.loginShellEnv(context.Background()); err == nil || !strings.Contains(err.Error(), "boom") || len(rec.calls) != 1 {
+		t.Errorf("failure not kept: calls=%d err=%v", len(rec.calls), err)
+	}
+	now = now.Add(time.Second)
+	if got, err := h.loginShellEnv(context.Background()); err != nil || !contains(got, "A=1") || len(rec.calls) != 2 {
+		t.Errorf("got %v calls=%d err=%v", got, len(rec.calls), err)
+	}
+}
+
+func TestLoginShellEnvCanceledCallerKeepsNoFailure(t *testing.T) {
+	var calls atomic.Int32
+	rec := &recorder{reply: func(string, []string) ([]byte, error) {
+		if calls.Add(1) == 1 {
+			return nil, context.Canceled
+		}
+		return []byte("A=1\x00"), nil
+	}}
+	h := newHosting(t, rec)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := h.loginShellEnv(ctx); err == nil {
+		t.Fatal("failure hidden")
+	}
 	if got, err := h.loginShellEnv(context.Background()); err != nil || !contains(got, "A=1") {
 		t.Errorf("got %v err=%v", got, err)
 	}
+}
+
+func TestLoginShellEnvConcurrentCallsShareOneRun(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+	rec := &recorder{reply: func(string, []string) ([]byte, error) {
+		calls.Add(1)
+		close(started)
+		<-release
+		return []byte("A=1\x00"), nil
+	}}
+	h := newHosting(t, rec)
+	const n = 5
+	results := make(chan []string, n)
+	go func() {
+		got, _ := h.loginShellEnv(context.Background())
+		results <- got
+	}()
+	<-started
+	for range n - 1 {
+		go func() {
+			got, _ := h.loginShellEnv(context.Background())
+			results <- got
+		}()
+	}
+	// The shell runs without h.mu: the lock is free while it is blocked.
+	h.mu.Lock()
+	h.mu.Unlock()
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	for range n {
+		if got := <-results; !contains(got, "A=1") {
+			t.Errorf("got %v", got)
+		}
+	}
+	if c := calls.Load(); c != 1 {
+		t.Errorf("shell run %d times", c)
+	}
+}
+
+func TestLoginShellEnvWaiterStopsWithItsContext(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	rec := &recorder{reply: func(string, []string) ([]byte, error) {
+		close(started)
+		<-release
+		return []byte("A=1\x00"), nil
+	}}
+	h := newHosting(t, rec)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.loginShellEnv(context.Background())
+	}()
+	<-started
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := h.loginShellEnv(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("err=%v", err)
+	}
+	close(release)
+	<-done
 }
 
 func TestLoginShellEnvWithInjectedShellScript(t *testing.T) {

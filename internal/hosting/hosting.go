@@ -43,10 +43,14 @@ type Hosting struct {
 	Exec              func(path string, argv, env []string) error // replaces the process; default: syscall.Exec
 	Cwd               func() (string, error)                      // default: os.Getwd
 	StartupCheckDelay time.Duration                               // how long a new session must stay alive to count as started; zero does not wait
+	Now               func() time.Time                            // default: time.Now
 
-	mu        sync.Mutex
-	loginEnv  []string
-	loginDone bool
+	mu            sync.Mutex
+	loginEnv      []string
+	loginDone     bool
+	loginErr      error      // last failure of the login shell
+	loginFailedAt time.Time  // when loginErr happened
+	loginCall     *loginCall // the login shell run in progress, if any
 }
 
 // NewSystem returns a Hosting wired to the real system, with environ as the

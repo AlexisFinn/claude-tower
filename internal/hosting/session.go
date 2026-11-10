@@ -112,7 +112,7 @@ func (h *Hosting) NewAttachSession(ctx context.Context, dir, id string, env []st
 	if !backgroundIDRe.MatchString(id) {
 		return tmux.Pane{}, fmt.Errorf("identifiant de session invalide : %q", id)
 	}
-	if err := h.EnsureConfig(ctx); err != nil {
+	if err := h.ensureConfigChanged(ctx); err != nil {
 		return tmux.Pane{}, err
 	}
 	argv, err := h.resolveClaude(ctx, env)
@@ -195,7 +195,7 @@ func (h *Hosting) NewSession(ctx context.Context, dir string, args []string, env
 	if h.Self == "" {
 		return tmux.Pane{}, errors.New("chemin de claude-tower inconnu")
 	}
-	if err := h.EnsureConfig(ctx); err != nil {
+	if err := h.ensureConfigChanged(ctx); err != nil {
 		return tmux.Pane{}, err
 	}
 	argv, err := h.resolveClaude(ctx, env)

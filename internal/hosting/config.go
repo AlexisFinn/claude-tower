@@ -85,11 +85,25 @@ func tmuxConf(term string) string {
 }
 
 // EnsureConfig writes tmux.conf when its content changed and, when the
-// private server is running, makes it read the file.
+// private server is running, makes it read the file, whether the file changed
+// or not.
 func (h *Hosting) EnsureConfig(ctx context.Context) error {
-	path, err := h.writeTmuxConf(ctx)
+	return h.syncConfig(ctx, true)
+}
+
+// ensureConfigChanged is EnsureConfig except that a running private server
+// reads the file only when its content changed.
+func (h *Hosting) ensureConfigChanged(ctx context.Context) error {
+	return h.syncConfig(ctx, false)
+}
+
+func (h *Hosting) syncConfig(ctx context.Context, reloadUnchanged bool) error {
+	path, changed, err := h.writeTmuxConf(ctx)
 	if err != nil {
 		return err
+	}
+	if !changed && !reloadUnchanged {
+		return nil
 	}
 	srv, err := h.server()
 	if err != nil {
@@ -105,11 +119,11 @@ func (h *Hosting) EnsureConfig(ctx context.Context) error {
 }
 
 // writeTmuxConf returns the path of tmux.conf, written if it differs from the
-// expected content.
-func (h *Hosting) writeTmuxConf(ctx context.Context) (string, error) {
+// expected content, and whether it was written.
+func (h *Hosting) writeTmuxConf(ctx context.Context) (string, bool, error) {
 	dir := h.ConfigDir
 	if err := os.MkdirAll(dir, dirMode); err != nil {
-		return "", err
+		return "", false, err
 	}
 	term := defaultTerm
 	if _, err := h.tmuxRun()(ctx, nil, "infocmp", defaultTerm); err != nil {
@@ -118,21 +132,21 @@ func (h *Hosting) writeTmuxConf(ctx context.Context) (string, error) {
 	path := filepath.Join(dir, tmuxConfFile)
 	want := []byte(tmuxConf(term))
 	if have, err := os.ReadFile(path); err == nil && bytes.Equal(have, want) {
-		return path, nil
+		return path, false, nil
 	}
 	tmp, err := os.CreateTemp(dir, tmuxConfFile+".*")
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	_, werr := tmp.Write(want)
 	cerr := tmp.Close()
 	if err := errors.Join(werr, cerr); err != nil {
 		os.Remove(tmp.Name())
-		return "", err
+		return "", false, err
 	}
 	if err := os.Rename(tmp.Name(), path); err != nil {
 		os.Remove(tmp.Name())
-		return "", err
+		return "", false, err
 	}
-	return path, nil
+	return path, true, nil
 }

@@ -219,23 +219,75 @@ func (h *Hosting) runShell(ctx context.Context, command string) ([]byte, error) 
 	return out, nil
 }
 
+// loginRetry is how long a failure of the login shell is kept before the
+// shell is run again.
+const loginRetry = time.Minute
+
+// loginCall is one run of the login shell that concurrent callers wait for.
+type loginCall struct {
+	done chan struct{} // closed when the run ended
+}
+
+func (h *Hosting) now() time.Time {
+	if h.Now != nil {
+		return h.Now()
+	}
+	return time.Now()
+}
+
 // loginShellEnv returns the environment of the calling process completed with
 // that of an interactive login shell: the variables of the calling process
 // take precedence, except PATH, which lists the shell's entries first and then
-// the calling process's other ones. The result is computed once.
+// the calling process's other ones. The result is computed once. A failure is
+// kept for loginRetry, during which calls return it without running the shell.
+// Concurrent calls share one run of the shell and do not hold h.mu while it
+// runs.
 func (h *Hosting) loginShellEnv(ctx context.Context) ([]string, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.loginDone {
-		return h.loginEnv, nil
+	for {
+		h.mu.Lock()
+		if h.loginDone {
+			env := h.loginEnv
+			h.mu.Unlock()
+			return env, nil
+		}
+		if h.loginErr != nil && h.now().Sub(h.loginFailedAt) < loginRetry {
+			err := h.loginErr
+			h.mu.Unlock()
+			return nil, err
+		}
+		if call := h.loginCall; call != nil {
+			h.mu.Unlock()
+			select {
+			case <-call.done:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+			continue
+		}
+		call := &loginCall{done: make(chan struct{})}
+		h.loginCall = call
+		h.mu.Unlock()
+
+		out, err := h.runShell(ctx, "env -0")
+
+		h.mu.Lock()
+		h.loginCall = nil
+		var env []string
+		switch {
+		case err == nil:
+			env = mergeLoginEnv(h.Env, parseEnvBlock(out))
+			h.loginEnv, h.loginDone, h.loginErr = env, true, nil
+		case ctx.Err() != nil:
+			// A canceled caller says nothing about the shell: no failure kept.
+			err = fmt.Errorf("environnement du shell de connexion : %w", err)
+		default:
+			err = fmt.Errorf("environnement du shell de connexion : %w", err)
+			h.loginErr, h.loginFailedAt = err, h.now()
+		}
+		h.mu.Unlock()
+		close(call.done)
+		return env, err
 	}
-	out, err := h.runShell(ctx, "env -0")
-	if err != nil {
-		return nil, fmt.Errorf("environnement du shell de connexion : %w", err)
-	}
-	h.loginEnv = mergeLoginEnv(h.Env, parseEnvBlock(out))
-	h.loginDone = true
-	return h.loginEnv, nil
 }
 
 // AppEnv returns the environment sessions started by the application inherit:
