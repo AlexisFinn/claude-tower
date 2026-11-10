@@ -30,35 +30,6 @@ function fakeContext(calls: Call[]): CanvasRenderingContext2D {
   }) as unknown as CanvasRenderingContext2D
 }
 
-interface Put {
-  width: number
-  height: number
-  y: number
-}
-
-function image(width: number, height: number): ImageData {
-  return { width, height, data: new Uint8ClampedArray(width * height * 4) } as unknown as ImageData
-}
-
-/** The canvas a thumbnail paints its rows into, three times wider: its calls are recorded. */
-function scratchContext(calls: Call[]): CanvasRenderingContext2D {
-  const ctx = fakeContext(calls) as unknown as Record<string, unknown>
-  ctx.canvas = { width: 0, height: 0 }
-  ctx.getImageData = (x: number, y: number, w: number, h: number) => {
-    calls.push({ name: 'getImageData', args: [x, y, w, h], fillStyle: '' })
-    return image(w, h)
-  }
-  return ctx as unknown as CanvasRenderingContext2D
-}
-
-/** The displayed canvas, which only receives folded rows. */
-function displayContext(puts: Put[]): CanvasRenderingContext2D {
-  const ctx = fakeContext([]) as unknown as Record<string, unknown>
-  ctx.createImageData = image
-  ctx.putImageData = (img: ImageData, _x: number, y: number) => puts.push({ width: img.width, height: img.height, y })
-  return ctx as unknown as CanvasRenderingContext2D
-}
-
 class FakeCanvas {
   width = 0
   height = 0
@@ -80,17 +51,14 @@ const ratio = { width: 0.6, height: 1.2 }
 const original = globalThis.document
 
 let calls: Call[]
-let puts: Put[]
-let scratch: CanvasRenderingContext2D
 let canvas: FakeCanvas
 let term: Terminal
 
 beforeEach(() => {
   calls = []
-  puts = []
-  scratch = scratchContext(calls)
-  ;(globalThis as { document?: unknown }).document = { createElement: () => ({ getContext: () => scratch }) }
-  canvas = new FakeCanvas(displayContext(puts))
+  const measure = fakeContext([])
+  ;(globalThis as { document?: unknown }).document = { createElement: () => ({ getContext: () => measure }) }
+  canvas = new FakeCanvas(fakeContext(calls))
   term = new Terminal({ cols: 20, rows: 5, scrollback: 0, allowProposedApi: true })
 })
 
@@ -106,7 +74,6 @@ function show(lines: string[], rows: number): Promise<void> {
 
 function draw(thumbnail: ReturnType<typeof createThumbnail>, g: BodyGeometry, dpr = 1): void {
   calls.length = 0
-  puts.length = 0
   thumbnail.draw(term.buffer.active, g, dpr)
 }
 
@@ -152,7 +119,6 @@ describe('createThumbnail', () => {
     draw(thumbnail, geometry())
     draw(thumbnail, geometry())
     expect(calls).toEqual([])
-    expect(puts).toEqual([])
   })
 
   it('repaints only the row that changed', async () => {
@@ -223,24 +189,13 @@ describe('createThumbnail', () => {
     expect(underlines.every((c) => c.fillStyle === '#202020')).toBe(true)
   })
 
-  it('paints rows three times wider and folds each onto the displayed canvas', async () => {
+  it('draws at the display resolution', async () => {
     await show(['hello', 'world'], 2)
     const g = geometry(2)
-    draw(createThumbnail(canvas as unknown as HTMLCanvasElement), g)
-    expect(canvas.width).toBe(Math.round(g.cols * g.cellWidth))
-    expect(puts.map((p) => p.width)).toEqual([canvas.width, canvas.width])
-    expect(puts.map((p) => p.y)).toEqual([0, puts[0].height])
-    expect(scratch.canvas.width).toBe(3 * canvas.width)
-    expect(calls.filter((c) => c.name === 'setTransform').map((c) => c.args)).toEqual([
-      [3, 0, 0, 1, 0, -0],
-      [1, 0, 0, 1, 0, 0],
-      [3, 0, 0, 1, 0, -puts[0].height],
-      [1, 0, 0, 1, 0, 0],
-    ])
-    expect(calls.filter((c) => c.name === 'getImageData').map((c) => c.args)).toEqual([
-      [0, 0, 3 * canvas.width, puts[0].height],
-      [0, 0, 3 * canvas.width, puts[1].height],
-    ])
+    draw(createThumbnail(canvas as unknown as HTMLCanvasElement), g, 2)
+    expect(canvas.width).toBe(Math.round(g.cols * g.cellWidth * 2))
+    expect(canvas.style.width).toBe(`${canvas.width / 2}px`)
+    expect(paintedRows()).toHaveLength(2)
   })
 
   it('draws one backing pixel per device pixel below a ratio of 1 too', async () => {

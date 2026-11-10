@@ -1,10 +1,3 @@
-<script module lang="ts">
-  import { measureFont, THUMBNAIL_FONT_FAMILY } from './lib/thumbnail'
-
-  // The font is the same in every card, so its cell size per pixel of font is measured once.
-  const cellRatio = measureFont(THUMBNAIL_FONT_FAMILY).cell
-</script>
-
 <script lang="ts">
   import { onMount, untrack } from 'svelte'
   import { Terminal } from '@xterm/xterm'
@@ -19,7 +12,7 @@
   import { frameClass } from './lib/frame'
   import type { Rect } from './lib/layout'
   import { screenSequence } from './lib/screenSequence'
-  import { createThumbnail, type Thumbnail } from './lib/thumbnail'
+  import { createThumbnail, measureFont, type Thumbnail } from './lib/thumbnail'
 
   interface Props {
     card: core.Card
@@ -35,6 +28,7 @@
     onMeasure: (pid: number, size: GridSize | null) => void
     /** Receives the terminal size that fills the body at a legible font, for a session the application may resize. */
     onFit: (pid: number, size: GridSize | null) => void
+    family: string
     onVisible: (pid: number, visible: boolean) => void
   }
 
@@ -51,6 +45,7 @@
     onKill,
     onMeasure,
     onFit,
+    family,
     onVisible,
   }: Props = $props()
 
@@ -68,6 +63,8 @@
 
   // The card object is replaced on every refresh: effects depend on these values instead.
   const pid = $derived(card.PID)
+  // measureFont caches by family, so every card shares one measure.
+  const cellRatio = $derived(measureFont(family).cell)
   const inTmux = $derived(card.InTmux)
   const activity = $derived(parseActivity(card.Activity))
   const activityIcon = $derived(
@@ -79,6 +76,7 @@
 
   $effect(() => {
     if (!inTmux || !canvas) return
+    const font = family
     const t = new Terminal({
       cols: 80,
       rows: 24,
@@ -91,7 +89,7 @@
     lastContentKey = ''
     lastPaintKey = ''
     term = t
-    thumbnail = createThumbnail(canvas)
+    thumbnail = createThumbnail(canvas, font)
     return () => {
       term = null
       thumbnail = null

@@ -4,7 +4,6 @@ import { glyphShapes, isBoxGlyph, type Shape } from './boxDrawing'
 import { changedRows } from './rowDiff'
 import { readRow, type BufferLike, type DrawCell, type Row } from './screenCells'
 import { DEFAULT_BG } from './termPalette'
-import { foldSubpixels, SUBPIXELS } from './subpixel'
 import { cellBounds } from './thumbnailLayout'
 
 /** Font stack of the thumbnails: JetBrains Mono, which stays legible at small sizes, when installed, then the usual monospace fonts. */
@@ -130,17 +129,17 @@ function displayScale(dpr: number): number {
 /** Draws a terminal buffer into a canvas, redrawing only the rows that changed. */
 export interface Thumbnail {
   /**
-   * Draws the first rows of the buffer for a geometry, with subpixel
-   * rendering: the backing store has the display resolution, so each of its
-   * pixels is displayed on one device pixel. Everything is redrawn, and the
+   * Draws the first rows of the buffer for a geometry. The backing store has
+   * the display resolution, so each of its pixels is displayed on one device
+   * pixel and the font rasterizer smooths the text itself. Everything is redrawn, and the
    * canvas aligned, when the geometry, the font or the device pixel ratio
    * changed.
    */
   draw(buffer: BufferLike, geometry: BodyGeometry, dpr: number): void
   /**
    * Shifts the canvas by at most half a device pixel so that its top left
-   * corner falls on a whole device pixel, which the color stripes need. To be
-   * called again whenever the canvas moves.
+   * corner falls on a whole device pixel, so that the browser does not
+   * resample it. To be called again whenever the canvas moves.
    */
   align(dpr: number): void
 }
@@ -152,33 +151,7 @@ export function createThumbnail(canvas: HTMLCanvasElement, family: string = THUM
   let layoutKey = ''
   let signatures: string[] = []
   let cell: IBufferCell | undefined
-  let wide: CanvasRenderingContext2D | null = null
-  let folded: ImageData | null = null
   let shift = { x: 0, y: 0 }
-
-  /** Paints a row three times wider into a scratch canvas, then folds it onto the color stripes of the canvas. */
-  function paintSubpixelRow(row: Row, y: number, px: Pixels): void {
-    if (!ctx) return
-    const [y0, y1] = cellBounds(y, px.cellHeight)
-    const height = y1 - y0
-    if (height <= 0) return
-    const width = px.width * SUBPIXELS
-    wide ??= document.createElement('canvas').getContext('2d', { alpha: false, willReadFrequently: true })
-    if (!wide) return
-    if (wide.canvas.width < width || wide.canvas.height < height) {
-      wide.canvas.width = Math.max(wide.canvas.width, width)
-      wide.canvas.height = Math.max(wide.canvas.height, height)
-    }
-    wide.setTransform(SUBPIXELS, 0, 0, 1, 0, -y0)
-    wide.textBaseline = 'alphabetic'
-    wide.textAlign = 'left'
-    paintRow(wide, row, y, px)
-    wide.setTransform(1, 0, 0, 1, 0, 0)
-    const src = wide.getImageData(0, 0, width, height)
-    if (!folded || folded.width !== px.width || folded.height !== height) folded = ctx.createImageData(px.width, height)
-    foldSubpixels(src.data, folded.data, px.width, height)
-    ctx.putImageData(folded, 0, y0)
-  }
 
   /** Aligns the canvas from its current position, without clearing its shift first, so no layout is forced twice. */
   function align(dpr: number): void {
@@ -224,7 +197,7 @@ export function createThumbnail(canvas: HTMLCanvasElement, family: string = THUM
       const rows: Row[] = []
       for (let y = 0; y < g.rows; y++) rows.push(readRow(buffer.getLine(y), g.cols, cell))
       const next = rows.map((r) => r.signature)
-      for (const y of changedRows(signatures, next)) paintSubpixelRow(rows[y], y, px)
+      for (const y of changedRows(signatures, next)) paintRow(ctx, rows[y], y, px)
       signatures = next
     },
   }

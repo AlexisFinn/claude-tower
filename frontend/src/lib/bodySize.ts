@@ -68,17 +68,24 @@ export function sameGeometry(a: BodyGeometry | null, b: BodyGeometry | null): bo
 
 /** Font size, in pixels, that a session sized to its card displays its text at. */
 export const FIT_FONT = 12
-/** Smallest terminal a session is sized to: below it Claude Code cannot lay out its screen. */
-export const MIN_FIT: GridSize = { cols: 60, rows: 12 }
+/**
+ * Smallest terminal a session is sized to: Claude Code docks side panes, such
+ * as the tasks pane, only from 144 columns.
+ */
+export const MIN_FIT: GridSize = { cols: 144, rows: 12 }
 /** Largest terminal a session is sized to. */
 export const MAX_FIT = 1000
 
 /**
  * Returns the terminal size that fills a card body at FIT_FONT, within MIN_FIT
- * and MAX_FIT: a body too small for MIN_FIT shows it with a smaller font.
+ * and MAX_FIT. The rows are those that fit at the font bodyGeometry then
+ * displays the columns at, so that the whole terminal shows: a body too
+ * narrow for MIN_FIT shows it with a smaller font and more rows.
  */
 export function fitGrid(bodyWidth: number, bodyHeight: number, cellRatio: CellSize): GridSize {
-  const fit = (length: number, cell: number, min: number): number =>
-    Math.min(MAX_FIT, Math.max(min, Math.floor(Math.max(0, length) / (cell * FIT_FONT) + 1e-9)))
-  return { cols: fit(bodyWidth, cellRatio.width, MIN_FIT.cols), rows: fit(bodyHeight, cellRatio.height, MIN_FIT.rows) }
+  const width = Math.max(0, bodyWidth)
+  const cols = Math.min(MAX_FIT, Math.max(MIN_FIT.cols, Math.floor(width / (cellRatio.width * FIT_FONT) + 1e-9)))
+  const font = Math.min(MAX_DISPLAY_FONT, width / (cols * cellRatio.width))
+  const fitting = font > 0 ? Math.floor(Math.max(0, bodyHeight) / (font * cellRatio.height) + 1e-9) : 0
+  return { cols, rows: Math.min(MAX_FIT, Math.max(MIN_FIT.rows, fitting)) }
 }

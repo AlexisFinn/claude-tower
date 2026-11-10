@@ -23,6 +23,7 @@
   import { startFailureText } from './lib/startFailures'
   import { summarizeStates } from './lib/summary'
   import { createFitRequests } from './lib/fitRequests'
+  import { THUMBNAIL_FONTS, saveFontIndex, savedFontIndex } from './lib/thumbnailFonts'
   import { createToasts, type Toast, type ToastKind } from './lib/toasts'
   import { createTypingPause } from './lib/typingPause'
 
@@ -58,6 +59,16 @@
   const placed = $derived(layout(cards.length, gridWidth, gridHeight))
   const summary = $derived(summarizeStates(cards))
   const selectedCard = $derived(cards.find((c) => c.PID === selected) ?? null)
+
+  let fontIndex = $state(savedFontIndex(window.localStorage))
+  const thumbnailFamily = $derived(THUMBNAIL_FONTS[fontIndex].family)
+
+  /** Switches the thumbnails to the next font and names it. */
+  function nextThumbnailFont(): void {
+    fontIndex = (fontIndex + 1) % THUMBNAIL_FONTS.length
+    saveFontIndex(window.localStorage, fontIndex)
+    notify('info', `Miniatures : ${THUMBNAIL_FONTS[fontIndex].name} (F9 pour changer)`)
+  }
 
   function notify(kind: ToastKind, text: string): void {
     notifier.push(kind, text)
@@ -301,6 +312,11 @@
   }
 
   function onKeydown(e: KeyboardEvent): void {
+    if (fullscreen === null && e.key === 'F9' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+      e.preventDefault()
+      nextThumbnailFont()
+      return
+    }
     const route = routeKey(
       { fullscreen: fullscreen !== null, confirmKill: confirmKill !== null, help: helpOpen },
       e,
@@ -358,6 +374,7 @@
                 onKill={askKillOf}
                 {onMeasure}
                 {onFit}
+                family={thumbnailFamily}
                 {onVisible}
               />
             {/if}
